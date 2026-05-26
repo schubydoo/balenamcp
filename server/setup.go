@@ -2,43 +2,99 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// defaultExecTimeout caps how long any single balena CLI subprocess may run
+// before we forcibly kill it. Some balena commands (notably `device logs
+// --tail`) are legitimately long-running and would otherwise block the MCP
+// transport forever once an agent invoked them. 60s is comfortably above the
+// p99 latency of cloud-side balena CLI calls observed in practice while still
+// surfacing a clean timeout error to the LLM caller in pathological cases.
+const defaultExecTimeout = 60 * time.Second
+
 // ServerConfig holds runtime configuration shared across tool handlers.
 type ServerConfig struct {
 	DryRun bool
+
+	// ExecTimeout is the per-call wall-clock cap for the underlying balena CLI
+	// subprocess. Populated from the BALENAMCP_EXEC_TIMEOUT env var (seconds)
+	// at SetupServer time; defaults to defaultExecTimeout when unset/invalid.
+	ExecTimeout time.Duration
 }
 
 var Config = ServerConfig{}
 
-// executeCommand shells out to the balena CLI (or pretends to, in dry-run mode).
-// In dry-run mode the rendered command is returned verbatim so tests/inspection
-// can verify the argv shape without hitting balenaCloud.
-func executeCommand(args []string) (string, error) {
+// loadConfigFromEnv reads server tuning from env vars. Called once from
+// SetupServer; safe to re-invoke from tests when env state changes.
+func loadConfigFromEnv() {
+	Config.ExecTimeout = defaultExecTimeout
+	if v := os.Getenv("BALENAMCP_EXEC_TIMEOUT"); v != "" {
+		secs, err := strconv.Atoi(v)
+		if err == nil && secs > 0 {
+			Config.ExecTimeout = time.Duration(secs) * time.Second
+		} else {
+			fmt.Fprintf(os.Stderr,
+				"BALENAMCP_EXEC_TIMEOUT=%q is not a positive integer; using default %s\n",
+				v, defaultExecTimeout)
+		}
+	}
+}
+
+// executeCommand shells out to the balena CLI (or pretends to, in dry-run
+// mode). The ctx carries both client-side cancellation (the MCP framework
+// gives us the handler's context) and the per-call timeout — whichever fires
+// first kills the subprocess.
+//
+// In dry-run mode the rendered command is returned verbatim so tests and
+// inspection can verify the argv shape without hitting balenaCloud.
+func executeCommand(ctx context.Context, args []string) (string, error) {
 	if Config.DryRun {
 		cmdStr := "balena " + strings.Join(args, " ")
 		fmt.Fprintf(os.Stderr, "[DRY RUN] Would execute: %s\n", cmdStr)
 		return fmt.Sprintf("[DRY RUN] %s", cmdStr), nil
 	}
-	cmd := exec.Command("balena", args...)
+
+	timeout := Config.ExecTimeout
+	if timeout <= 0 {
+		timeout = defaultExecTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "balena", args...)
 	output, err := cmd.CombinedOutput()
+
+	// Distinguish "we ran out of time" from "the CLI itself failed". The
+	// timeout case is the one a caller can recover from by chunking work
+	// differently (e.g., not asking for --tail); the CLI-error case usually
+	// just needs the stderr surfaced to the user.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("balena CLI timed out after %s (set BALENAMCP_EXEC_TIMEOUT to override)", timeout)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "", fmt.Errorf("balena CLI cancelled by caller")
+	}
 	if err != nil {
 		return "", fmt.Errorf("balena CLI error: %v\n%s", err, string(output))
 	}
 	return string(output), nil
 }
 
-// runCmd is the standard exit point of a tool handler: run the argv, return
-// the CLI output as tool text or a structured tool error.
-func runCmd(args []string) (*mcp.CallToolResult, error) {
-	out, err := executeCommand(args)
+// runCmd is the standard exit point of a tool handler: run the argv with the
+// handler's context, return the CLI output as tool text or a structured tool
+// error.
+func runCmd(ctx context.Context, args []string) (*mcp.CallToolResult, error) {
+	out, err := executeCommand(ctx, args)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -129,6 +185,8 @@ func getIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.CallTo
 
 // SetupServer wires up every tool and returns the MCP server ready to serve over stdio.
 func SetupServer() *server.MCPServer {
+	loadConfigFromEnv()
+
 	srv := server.NewMCPServer(
 		"BalenaMCP",
 		"0.1.0",
@@ -167,7 +225,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		mcp.WithDescription("Display the version of the underlying balena CLI."),
 		readOnly,
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return runCmd([]string{"version"})
+		return runCmd(ctx, []string{"version"})
 	})
 
 	// whoami ---------------------------------------------------------------
@@ -175,7 +233,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		mcp.WithDescription("Show account info for the currently authenticated balenaCloud user."),
 		readOnly,
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return runCmd([]string{"whoami"})
+		return runCmd(ctx, []string{"whoami"})
 	})
 
 	// fleet-list -----------------------------------------------------------
@@ -186,7 +244,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := []string{"fleet", "list"}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// fleet-info -----------------------------------------------------------
@@ -203,7 +261,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		}
 		args := []string{"fleet", fleet}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-list ----------------------------------------------------------
@@ -222,7 +280,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 			args = append(args, "--fleet", fleet)
 		}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-info ----------------------------------------------------------
@@ -239,7 +297,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		}
 		args := []string{"device", uuid}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-logs ----------------------------------------------------------
@@ -270,7 +328,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		if v := r.GetInt("max_retry", -1); v >= 0 {
 			args = append(args, "--max-retry", fmt.Sprintf("%d", v))
 		}
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-type-list -----------------------------------------------------
@@ -283,7 +341,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args := []string{"device-type", "list"}
 		args = appendBoolFlag(args, r, "all", "--all")
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// os-versions ----------------------------------------------------------
@@ -302,7 +360,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args := []string{"os", "versions", deviceType}
 		args = appendBoolFlag(args, r, "esr", "--esr")
 		args = appendBoolFlag(args, r, "include_draft", "--include-draft")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// release-list ---------------------------------------------------------
@@ -319,7 +377,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		}
 		args := []string{"release", "list", fleet}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// release-info ---------------------------------------------------------
@@ -338,7 +396,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args := []string{"release", id}
 		args = appendBoolFlag(args, r, "composition", "--composition")
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// release-asset-list ---------------------------------------------------
@@ -355,7 +413,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		}
 		args := []string{"release-asset", "list", id}
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// tag-list -------------------------------------------------------------
@@ -371,7 +429,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		args := append([]string{"tag", "list"}, flag...)
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// env-list -------------------------------------------------------------
@@ -406,7 +464,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		}
 		args = appendBoolFlag(args, r, "config", "--config")
 		args = appendBoolFlag(args, r, "json", "--json")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// organization-list ----------------------------------------------------
@@ -414,7 +472,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		mcp.WithDescription("List all balenaCloud organizations the current user belongs to."),
 		readOnly,
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return runCmd([]string{"organization", "list"})
+		return runCmd(ctx, []string{"organization", "list"})
 	})
 
 	// ssh-key-list ---------------------------------------------------------
@@ -422,7 +480,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		mcp.WithDescription("List SSH keys registered in balenaCloud for the current user."),
 		readOnly,
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return runCmd([]string{"ssh-key", "list"})
+		return runCmd(ctx, []string{"ssh-key", "list"})
 	})
 
 	// api-key-list ---------------------------------------------------------
@@ -441,7 +499,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 			args = append(args, "--fleet", fleet)
 		}
 		args = appendBoolFlag(args, r, "user", "--user")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 }
 
@@ -461,7 +519,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		}
 		args := []string{"device", "reboot", uuid}
 		args = appendBoolFlag(args, r, "force", "--force")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-restart -------------------------------------------------------
@@ -484,7 +542,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		if service != "" {
 			args = append(args, "--service", service)
 		}
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-shutdown ------------------------------------------------------
@@ -500,7 +558,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		}
 		args := []string{"device", "shutdown", uuid}
 		args = appendBoolFlag(args, r, "force", "--force")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// device-purge ---------------------------------------------------------
@@ -514,7 +572,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		if errRes != nil {
 			return errRes, nil
 		}
-		return runCmd([]string{"device", "purge", uuid})
+		return runCmd(ctx, []string{"device", "purge", uuid})
 	})
 
 	// device-pin -----------------------------------------------------------
@@ -536,7 +594,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		if rel != "" {
 			args = append(args, rel)
 		}
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// fleet-pin ------------------------------------------------------------
@@ -558,7 +616,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		if rel != "" {
 			args = append(args, rel)
 		}
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// release-finalize -----------------------------------------------------
@@ -572,7 +630,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		if errRes != nil {
 			return errRes, nil
 		}
-		return runCmd([]string{"release", "finalize", id})
+		return runCmd(ctx, []string{"release", "finalize", id})
 	})
 
 	// tag-set --------------------------------------------------------------
@@ -599,7 +657,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 			args = append(args, v)
 		}
 		args = append(args, flag...)
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// tag-rm ---------------------------------------------------------------
@@ -621,7 +679,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 		}
 		args := []string{"tag", "rm", key}
 		args = append(args, flag...)
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// env-set --------------------------------------------------------------
@@ -658,7 +716,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 			args = append(args, "--service", service)
 		}
 		args = appendBoolFlag(args, r, "quiet", "--quiet")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 
 	// env-rm ---------------------------------------------------------------
@@ -682,6 +740,6 @@ func registerMutatingTools(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "service", "--service")
 		args = appendBoolFlag(args, r, "config", "--config")
 		args = appendBoolFlag(args, r, "yes", "--yes")
-		return runCmd(args)
+		return runCmd(ctx, args)
 	})
 }

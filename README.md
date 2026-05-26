@@ -34,6 +34,12 @@ GOOS=darwin  GOARCH=arm64 go build -o bin/balenamcp-darwin-arm64
 A `-dry-run` flag is available — the server prints the balena command it
 *would* run instead of executing it. Useful for testing/debugging.
 
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BALENAMCP_EXEC_TIMEOUT` | `60` (seconds) | Wall-clock cap on any single balena CLI subprocess. Prevents `device-logs --tail` and similar long-running commands from blocking the MCP transport indefinitely. Set to a higher integer for slow networks; the server logs a warning and falls back to default if the value is non-positive or non-numeric. |
+
 ## Authenticate
 
 Before using any tool that touches balenaCloud, log in once on the host:
