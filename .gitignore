@@ -33,3 +33,6 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Local-only agent notes (not part of the public repo)
+AGENTS.md
