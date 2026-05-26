@@ -30,6 +30,13 @@ type ServerConfig struct {
 	// subprocess. Populated from the BALENAMCP_EXEC_TIMEOUT env var (seconds)
 	// at SetupServer time; defaults to defaultExecTimeout when unset/invalid.
 	ExecTimeout time.Duration
+
+	// RequireConfirm, when true, forces every destructive tool to receive
+	// confirm:true in its arguments before it will run. Acts as a safety
+	// belt for MCP clients that don't honor the destructiveHint annotation
+	// (or for shared deployments where you don't trust every connected
+	// agent). Populated from BALENAMCP_REQUIRE_CONFIRM at SetupServer time.
+	RequireConfirm bool
 }
 
 var Config = ServerConfig{}
@@ -46,6 +53,17 @@ func loadConfigFromEnv() {
 			fmt.Fprintf(os.Stderr,
 				"BALENAMCP_EXEC_TIMEOUT=%q is not a positive integer; using default %s\n",
 				v, defaultExecTimeout)
+		}
+	}
+
+	Config.RequireConfirm = false
+	if v := os.Getenv("BALENAMCP_REQUIRE_CONFIRM"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"BALENAMCP_REQUIRE_CONFIRM=%q is not a boolean; defaulting to off\n", v)
+		} else {
+			Config.RequireConfirm = b
 		}
 	}
 }
@@ -212,10 +230,32 @@ func readOnly(t *mcp.Tool) {
 	mcp.WithDestructiveHintAnnotation(false)(t)
 }
 
-// destructive is the annotation pair for tools that change cloud or device state.
+// requireConfirm enforces the BALENAMCP_REQUIRE_CONFIRM gate at the top of
+// every destructive handler. When the gate is off this is a no-op; when on,
+// the caller must pass confirm:true in arguments or the handler refuses to
+// run. Returns nil on success or a structured error result to propagate.
+func requireConfirm(r mcp.CallToolRequest) *mcp.CallToolResult {
+	if !Config.RequireConfirm {
+		return nil
+	}
+	if r.GetBool("confirm", false) {
+		return nil
+	}
+	return mcp.NewToolResultError(
+		"this server requires explicit confirmation for destructive tools: " +
+			"set BALENAMCP_REQUIRE_CONFIRM=0 on the server, or pass confirm:true in the tool arguments to acknowledge the change")
+}
+
+// destructive is the annotation pair for tools that change cloud or device
+// state. Also injects a `confirm` schema field so LLM clients can discover
+// the BALENAMCP_REQUIRE_CONFIRM gate without reading source.
 func destructive(t *mcp.Tool) {
 	mcp.WithReadOnlyHintAnnotation(false)(t)
 	mcp.WithDestructiveHintAnnotation(true)(t)
+	mcp.WithBoolean("confirm",
+		mcp.Description("Set to true to acknowledge the destructive operation. "+
+			"Required only when the server is started with BALENAMCP_REQUIRE_CONFIRM=1; "+
+			"ignored otherwise."))(t)
 }
 
 func registerReadOnlyTools(srv *server.MCPServer) {
@@ -513,6 +553,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to reboot.")),
 		mcp.WithBoolean("force", mcp.Description("Force reboot even if updates are in progress.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
@@ -530,6 +573,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
 		mcp.WithString("service", mcp.Description("Service name(s) to restart, comma-separated. Omit to restart all services.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
@@ -552,6 +598,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to shut down.")),
 		mcp.WithBoolean("force", mcp.Description("Force shutdown even if updates are in progress.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
@@ -568,6 +617,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(),
 			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
@@ -582,6 +634,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID.")),
 		mcp.WithString("release", mcp.Description("Release commit to pin the device to. Omit to query the current pin.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
@@ -604,6 +659,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet slug (org/fleet).")),
 		mcp.WithString("release", mcp.Description("Release commit to pin the fleet to. Omit to query the current pin.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		fleet, errRes := requireIdentifier(r, "fleet", "fleet slug")
 		if errRes != nil {
 			return errRes, nil
@@ -626,6 +684,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("id", mcp.Required(),
 			mcp.Description("Release commit or numeric release ID to finalize.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		id, errRes := requireIdentifier(r, "id", "release commit or ID")
 		if errRes != nil {
 			return errRes, nil
@@ -643,6 +704,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("device", mcp.Description("Device UUID to tag.")),
 		mcp.WithString("release", mcp.Description("Release ID or commit to tag.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		key, errRes := requireIdentifier(r, "key", "tag key")
 		if errRes != nil {
 			return errRes, nil
@@ -669,6 +733,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("device", mcp.Description("Device UUID.")),
 		mcp.WithString("release", mcp.Description("Release ID or commit.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		key, errRes := requireIdentifier(r, "key", "tag key")
 		if errRes != nil {
 			return errRes, nil
@@ -693,6 +760,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithString("service", mcp.Description("Restrict to this service.")),
 		mcp.WithBoolean("quiet", mcp.Description("Suppress warnings.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		name, errRes := requireIdentifier(r, "name", "env var name")
 		if errRes != nil {
 			return errRes, nil
@@ -730,6 +800,9 @@ func registerMutatingTools(srv *server.MCPServer) {
 		mcp.WithBoolean("config", mcp.Description("The variable is a config variable.")),
 		mcp.WithBoolean("yes", mcp.Description("Skip the interactive confirmation prompt. Must be true for the call to actually delete.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
 		// env-rm's id is a numeric DB ID — no flag-shape risk.
 		id, err := r.RequireInt("id")
 		if err != nil {

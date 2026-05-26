@@ -276,6 +276,36 @@ func TestErrors(t *testing.T) {
 		"mutually exclusive")
 }
 
+// TestConfirmGate exercises BALENAMCP_REQUIRE_CONFIRM end-to-end via the env
+// var (not by poking server.Config directly — newTestClient calls
+// SetupServer which reloads from env, which is the realistic startup path).
+// Each subtest gets its own client built under the env it cares about.
+func TestConfirmGate(t *testing.T) {
+	t.Run("gate-on-without-confirm-refused", func(t *testing.T) {
+		t.Setenv("BALENAMCP_REQUIRE_CONFIRM", "1")
+		c, ctx := newTestClient(t)
+		expectError(t, c, ctx, "device-reboot",
+			map[string]any{"uuid": "7cf02a6"},
+			"requires explicit confirmation")
+	})
+
+	t.Run("gate-on-with-confirm-proceeds", func(t *testing.T) {
+		t.Setenv("BALENAMCP_REQUIRE_CONFIRM", "1")
+		c, ctx := newTestClient(t)
+		expect(t, c, ctx, "device-reboot",
+			map[string]any{"uuid": "7cf02a6", "confirm": true},
+			"balena device reboot 7cf02a6")
+	})
+
+	t.Run("gate-off-confirm-irrelevant", func(t *testing.T) {
+		t.Setenv("BALENAMCP_REQUIRE_CONFIRM", "0")
+		c, ctx := newTestClient(t)
+		expect(t, c, ctx, "device-reboot",
+			map[string]any{"uuid": "7cf02a6"},
+			"balena device reboot 7cf02a6")
+	})
+}
+
 // TestAnnotationsInvariant asserts that every advertised tool carries exactly
 // one of the read-only / destructive hints. mcp-go's default annotations have
 // both fields preset (ReadOnlyHint=false, DestructiveHint=true), so a tool

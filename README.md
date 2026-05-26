@@ -39,6 +39,7 @@ A `-dry-run` flag is available — the server prints the balena command it
 | Variable | Default | Purpose |
 |---|---|---|
 | `BALENAMCP_EXEC_TIMEOUT` | `60` (seconds) | Wall-clock cap on any single balena CLI subprocess. Prevents `device-logs --tail` and similar long-running commands from blocking the MCP transport indefinitely. Set to a higher integer for slow networks; the server logs a warning and falls back to default if the value is non-positive or non-numeric. |
+| `BALENAMCP_REQUIRE_CONFIRM` | unset (off) | When set to `1`/`true`, every destructive tool refuses to run unless the call carries `confirm: true` in its arguments. A belt-and-suspenders safety net for MCP clients that ignore the `destructiveHint` annotation. Off by default — Claude Desktop and other compliant clients already prompt before invoking destructive tools, so the gate is redundant there. |
 
 ## Authenticate
 
