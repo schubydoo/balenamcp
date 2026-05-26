@@ -268,6 +268,12 @@ func TestErrors(t *testing.T) {
 		map[string]any{"fleet": "--help"}, "cannot start with '-'")
 	expectError(t, c, ctx, "release-finalize",
 		map[string]any{"id": "-1"}, "cannot start with '-'")
+
+	// env-list: --config + --service is rejected at the server, mirroring the
+	// balena CLI's own exclusion rule.
+	expectError(t, c, ctx, "env-list",
+		map[string]any{"fleet": "my-fleet", "service": "svc", "config": true},
+		"mutually exclusive")
 }
 
 // TestAnnotationsInvariant asserts that every advertised tool carries exactly

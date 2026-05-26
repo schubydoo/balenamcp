@@ -392,6 +392,14 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		if errRes != nil {
 			return errRes, nil
 		}
+		// Upstream balena CLI rejects --config + --service together; surface
+		// that earlier with a clearer message instead of forwarding both and
+		// letting the CLI complain about a flag combination the user wasn't
+		// thinking of in those terms.
+		if service != "" && r.GetBool("config", false) {
+			return mcp.NewToolResultError(
+				"'service' and 'config' are mutually exclusive (config variables don't belong to a specific service)"), nil
+		}
 		args := append([]string{"env", "list"}, flag...)
 		if service != "" {
 			args = append(args, "--service", service)
