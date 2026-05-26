@@ -156,13 +156,64 @@ jobs:
           echo "$text" | grep -q -- '--fleet my-fleet --json' \
             || { echo "::error::dry-run argv unexpected: $text"; exit 1; }
 
+  coverage:
+    # Measures total statement coverage with cross-package attribution
+    # (-coverpkg=./...) so hits from main_test.go count against server/*. A
+    # single Ubuntu run is sufficient — line coverage doesn't vary by OS, and
+    # running the full matrix here would just multiply runtime without adding
+    # signal. The threshold is intentionally one notch below the current
+    # local number so new feature commits don't immediately fail CI; bump it
+    # up as the suite grows.
+    name: coverage (>= 80%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COVERAGE_MIN: "80.0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests with coverage
+        run: |
+          go test -race -count=1 \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -coverpkg=./... \
+            ./...
+
+      - name: Enforce minimum coverage
+        run: |
+          set -euo pipefail
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          # bc is on every GHA runner; awk works too but bc reads cleaner here.
+          if awk -v t="$total" -v m="$COVERAGE_MIN" 'BEGIN { exit !(t < m) }'; then
+            echo "::error::coverage ${total}% is below the ${COVERAGE_MIN}% floor"
+            echo "::group::Uncovered functions"
+            go tool cover -func=coverage.out | grep -v '100.0%' | grep -v '^total:'
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-profile
+          path: coverage.out
+          retention-days: 7
+
   ci-required-checks:
-    # Single check for branch protection to gate on. Aggregates lint + test
-    # + mcp-smoke. Add new required jobs by extending `needs` — nothing else
-    # to change.
+    # Single check for branch protection to gate on. Aggregates every job
+    # whose failure should block merging. Add new required jobs by extending
+    # `needs` — nothing else to change.
     name: ci required checks passed
     if: always()
-    needs: [lint, test, mcp-smoke]
+    needs: [lint, test, mcp-smoke, coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
