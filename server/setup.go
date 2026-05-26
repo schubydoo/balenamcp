@@ -341,16 +341,30 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 	})
 
 	// device-logs ----------------------------------------------------------
+	//
+	// `tail` is deliberately NOT exposed. The balena CLI supports --tail to
+	// stream logs indefinitely, but the MCP transport is request/response —
+	// a streaming response would block the conversation until our 60s exec
+	// timeout fires, returning a partial dump or a timeout error. Neither is
+	// useful for an agent. Non-tail mode (the default) returns recent
+	// historical logs and exits cleanly, which is what an agent actually
+	// wants when it asks "what's going on with this device?". A defensive
+	// guard below catches a non-compliant client that sends tail:true anyway.
 	srv.AddTool(mcp.NewTool("device-logs",
-		mcp.WithDescription("Show logs for a device. By default prints recent logs and exits."),
+		mcp.WithDescription("Show recent logs for a device and exit. Streaming (--tail) is not supported over the MCP transport — for continuous monitoring run `balena device logs <uuid> --tail` directly in a shell."),
 		readOnly,
 		mcp.WithString("device", mcp.Required(),
 			mcp.Description("Device UUID, IP, or .local address.")),
 		mcp.WithString("service", mcp.Description("Only show logs from this service name.")),
 		mcp.WithBoolean("system", mcp.Description("Only show system (host) logs.")),
-		mcp.WithBoolean("tail", mcp.Description("Continuously stream new logs (CAUTION: blocks indefinitely).")),
 		mcp.WithNumber("max_retry", mcp.Description("Max reconnection attempts on connection loss; 0 disables auto reconnect.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if r.GetBool("tail", false) {
+			return mcp.NewToolResultError(
+				"device-logs does not support streaming over MCP (tail:true). " +
+					"Omit tail to fetch recent historical logs; for continuous monitoring " +
+					"run 'balena device logs <uuid> --tail' directly in a shell."), nil
+		}
 		device, errRes := requireIdentifier(r, "device", "device UUID or address")
 		if errRes != nil {
 			return errRes, nil
@@ -364,7 +378,6 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 			args = append(args, "--service", service)
 		}
 		args = appendBoolFlag(args, r, "system", "--system")
-		args = appendBoolFlag(args, r, "tail", "--tail")
 		if v := r.GetInt("max_retry", -1); v >= 0 {
 			args = append(args, "--max-retry", fmt.Sprintf("%d", v))
 		}

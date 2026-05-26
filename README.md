@@ -82,7 +82,7 @@ Restart Claude Desktop. The tools below appear under the `balena` server.
 | `fleet-info` | Detailed info for one fleet |
 | `device-list` | List devices, optionally filtered by fleet |
 | `device-info` | Detailed info for one device |
-| `device-logs` | Recent (or streamed) logs from a device, optionally per-service |
+| `device-logs` | Recent historical logs from a device, optionally per-service. Streaming (`--tail`) is not supported over MCP — run the balena CLI directly for continuous monitoring. |
 | `device-type-list` | Supported balena device types |
 | `release-list` | Releases of a fleet |
 | `release-info` | Metadata or composition of one release |

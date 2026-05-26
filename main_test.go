@@ -128,9 +128,6 @@ func TestReadOnlyTools(t *testing.T) {
 	expect(t, c, ctx, "device-logs",
 		map[string]any{"device": "my-device", "system": true},
 		"balena device logs my-device --system")
-	expect(t, c, ctx, "device-logs",
-		map[string]any{"device": "my-device", "tail": true},
-		"balena device logs my-device --tail")
 	// max_retry boundary cases — gremlins caught that no test exercised the
 	// `if v >= 0` arm. 0 is the documented "disable auto-reconnect" sentinel
 	// (still >= 0, distinct from the absent case), 5 is a typical positive.
@@ -350,6 +347,13 @@ func TestErrors(t *testing.T) {
 	expectError(t, c, ctx, "env-list",
 		map[string]any{"fleet": "my-fleet", "service": "svc", "config": true},
 		"mutually exclusive")
+
+	// device-logs: tail:true is refused server-side. The schema deliberately
+	// omits `tail`, but a non-compliant client could still send it; the guard
+	// converts it to a structured error pointing the caller at the right path.
+	expectError(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "tail": true},
+		"does not support streaming")
 }
 
 // TestConfirmGate exercises BALENAMCP_REQUIRE_CONFIRM end-to-end via the env
