@@ -1,0 +1,50 @@
+# Dependabot config — weekly minor/patch sweeps grouped into a single PR per
+# ecosystem to keep the review surface small. Major bumps still open
+# individually because they typically need a code change or judgment call.
+#
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  # GitHub Actions — keeps the SHA-pinned references in ci.yml /
+  # release.yml / mutation.yml current. Dependabot updates each `uses:`
+  # to the latest tagged release's SHA and refreshes the # vX.Y.Z trailer
+  # comment, which is exactly the format we hand-pinned originally.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Go modules — bumps mcp-go, testify, and transitive deps. Major bumps
+  # (e.g. mcp-go v0.x → v1.x in the future) get their own PR so a breaking
+  # change isn't hidden inside a noisy group.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+    open-pull-requests-limit: 5
+    groups:
+      gomod-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
