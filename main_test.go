@@ -58,6 +58,17 @@ func expect(t *testing.T, c *mcpclient.Client, ctx context.Context, name string,
 		"tool %q with args %v should produce CLI argv %q; got: %s", name, args, expectedArgv, got)
 }
 
+// expectNot is the companion to expect: assert the dry-run output does NOT
+// contain a substring. Useful for catching mutations that silently widen the
+// argv — e.g., a flipped default value that causes an optional flag to
+// always be appended.
+func expectNot(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any, forbiddenArgv string) {
+	t.Helper()
+	got := callTool(t, c, ctx, name, args)
+	assert.NotContains(t, got, forbiddenArgv,
+		"tool %q with args %v should NOT produce %q in argv; got: %s", name, args, forbiddenArgv, got)
+}
+
 // expectError asserts the tool returns a structured error containing `msg`.
 func expectError(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any, msg string) {
 	t.Helper()
@@ -129,6 +140,12 @@ func TestReadOnlyTools(t *testing.T) {
 	expect(t, c, ctx, "device-logs",
 		map[string]any{"device": "my-device", "max_retry": float64(5)},
 		"balena device logs my-device --max-retry 5")
+	// Negative assertion: when max_retry is absent, --max-retry must NOT
+	// appear in argv. Catches mutations to the `-1` default sentinel that
+	// would flip it positive and silently always-append the flag.
+	expectNot(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device"},
+		"--max-retry")
 
 	// device-type-list
 	expect(t, c, ctx, "device-type-list",
