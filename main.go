@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schubydoo/balenamcp/server"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/schubydoo/balenamcp/server"
 )
 
 func main() {

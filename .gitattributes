@@ -1,0 +1,24 @@
+# Enforce LF for everything text — keeps gofmt, golangci-lint, shell scripts,
+# and YAML workflows consistent across Linux/macOS/Windows checkouts even when
+# a contributor's core.autocrlf is on.
+* text=auto eol=lf
+
+# Belt + suspenders for files that ABSOLUTELY must be LF.
+*.go        text eol=lf
+*.mod       text eol=lf
+*.sum       text eol=lf
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+go.work     text eol=lf
+go.work.sum text eol=lf
+
+# Binary files: never touch.
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.dylib     binary
+*.png       binary
+*.jpg       binary
+*.gif       binary
+*.ico       binary
