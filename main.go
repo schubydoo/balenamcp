@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/klutchell/balenamcp/server"
+	"github.com/schubydoo/balenamcp/server"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 

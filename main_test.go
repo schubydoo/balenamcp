@@ -1,379 +1,297 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
+	"context"
+	"strings"
 	"testing"
-	"time"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/schubydoo/balenamcp/server"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Example commands for each tool
-var exampleCommands = map[string][]struct {
-	name        string
-	params      map[string]interface{}
-	expectedCmd string
-	expectedErr error
-}{
-	"device-list": {
-		{
-			name: "list all devices with JSON",
-			params: map[string]interface{}{
-				"json": true,
-			},
-			expectedCmd: "balena device list --json",
-		},
-		{
-			name: "list devices in fleet",
-			params: map[string]interface{}{
-				"fleet": "my-fleet",
-			},
-			expectedCmd: "balena device list --fleet my-fleet",
-		},
-		{
-			name: "list devices with help",
-			params: map[string]interface{}{
-				"help": true,
-			},
-			expectedCmd: "balena device list --help",
-		},
-	},
-	"device-logs": {
-		{
-			name: "view device logs",
-			params: map[string]interface{}{
-				"device": "my-device",
-			},
-			expectedCmd: "balena device logs my-device",
-		},
-		{
-			name: "view service logs",
-			params: map[string]interface{}{
-				"device":  "my-device",
-				"service": "my-service",
-			},
-			expectedCmd: "balena device logs my-device --service my-service",
-		},
-		{
-			name: "view system logs",
-			params: map[string]interface{}{
-				"device": "my-device",
-				"system": true,
-			},
-			expectedCmd: "balena device logs my-device --system",
-		},
-		{
-			name: "follow logs",
-			params: map[string]interface{}{
-				"device": "my-device",
-				"tail":   true,
-			},
-			expectedCmd: "balena device logs my-device --tail",
-		},
-	},
-	"fleet-list": {
-		{
-			name:        "list all fleets",
-			params:      map[string]interface{}{},
-			expectedCmd: "balena fleet list",
-		},
-		{
-			name: "list fleets with JSON",
-			params: map[string]interface{}{
-				"json": true,
-			},
-			expectedCmd: "balena fleet list --json",
-		},
-		{
-			name: "list fleets with help",
-			params: map[string]interface{}{
-				"help": true,
-			},
-			expectedCmd: "balena fleet list --help",
-		},
-	},
-	"os-versions": {
-		{
-			name: "list OS versions",
-			params: map[string]interface{}{
-				"type": "raspberrypi4",
-			},
-			expectedCmd: "balena os versions raspberrypi4",
-		},
-		{
-			name: "list ESR versions",
-			params: map[string]interface{}{
-				"type": "raspberrypi4",
-				"esr":  true,
-			},
-			expectedCmd: "balena os versions raspberrypi4 --esr",
-		},
-		{
-			name: "list draft versions",
-			params: map[string]interface{}{
-				"type":          "raspberrypi4",
-				"include_draft": true,
-			},
-			expectedCmd: "balena os versions raspberrypi4 --include-draft",
-		},
-	},
-	"release-list": {
-		{
-			name: "list all releases",
-			params: map[string]interface{}{
-				"fleet": "my-fleet",
-			},
-			expectedCmd: "balena release list my-fleet",
-		},
-		{
-			name: "list releases with JSON",
-			params: map[string]interface{}{
-				"fleet": "my-fleet",
-				"json":  true,
-			},
-			expectedCmd: "balena release list my-fleet --json",
-		},
-	},
-	"release-info": {
-		{
-			name: "get release info",
-			params: map[string]interface{}{
-				"id": "123",
-			},
-			expectedCmd: "balena release 123",
-		},
-		{
-			name: "get release info with JSON",
-			params: map[string]interface{}{
-				"id":   "123",
-				"json": true,
-			},
-			expectedCmd: "balena release 123 --json",
-		},
-		{
-			name: "get release composition",
-			params: map[string]interface{}{
-				"id":          "123",
-				"composition": true,
-			},
-			expectedCmd: "balena release 123 --composition",
-		},
-	},
-	"version": {
-		{
-			name:        "get version info",
-			params:      map[string]interface{}{},
-			expectedCmd: "balena version",
-		},
-		{
-			name: "get version help",
-			params: map[string]interface{}{
-				"help": true,
-			},
-			expectedCmd: "balena version --help",
-		},
-	},
-	"tag-list": {
-		{
-			name: "list device tags",
-			params: map[string]interface{}{
-				"resource": "device",
-				"name":     "my-device",
-			},
-			expectedCmd: "balena tag list device my-device",
-		},
-		{
-			name: "list fleet tags",
-			params: map[string]interface{}{
-				"resource": "fleet",
-				"name":     "my-fleet",
-			},
-			expectedCmd: "balena tag list fleet my-fleet",
-		},
-		{
-			name: "list release tags",
-			params: map[string]interface{}{
-				"resource": "release",
-				"name":     "my-release",
-			},
-			expectedCmd: "balena tag list release my-release",
-		},
-	},
+// newTestClient spins up the MCP server in dry-run mode and returns an
+// in-process client ready to call tools.
+func newTestClient(t *testing.T) (*mcpclient.Client, context.Context) {
+	t.Helper()
+	server.Config.DryRun = true
+	srv := server.SetupServer()
+	c, err := mcpclient.NewInProcessClient(srv)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, c.Start(ctx))
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "0.0.0"}
+	_, err = c.Initialize(ctx, initReq)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = c.Close() })
+	return c, ctx
 }
 
-func runCommandTest(t *testing.T, tool string, testCase struct {
-	name        string
-	params      map[string]interface{}
-	expectedCmd string
-	expectedErr error
-}) {
-	// Start the MCP server as a subprocess in dry-run mode
-	cmd := exec.Command("go", "run", "main.go", "-dry-run")
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdin pipe: %v", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdout pipe: %v", err)
-	}
-	cmd.Stderr = os.Stderr
+// callTool invokes a tool and returns the resulting text payload. In dry-run
+// mode the server returns "[DRY RUN] balena <argv...>" which we assert against.
+func callTool(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any) string {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = args
+	res, err := c.CallTool(ctx, req)
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Content, "tool returned no content")
 
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start MCP server: %v", err)
-	}
-	defer func() {
-		stdin.Close()
-		stdout.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
+	text, ok := mcp.AsTextContent(res.Content[0])
+	require.True(t, ok, "first content is not text: %T", res.Content[0])
+	return text.Text
+}
 
-	// Give the server a moment to start
-	time.Sleep(200 * time.Millisecond)
+// expect asserts the dry-run output of a tool call contains the expected argv string.
+func expect(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any, expectedArgv string) {
+	t.Helper()
+	got := callTool(t, c, ctx, name, args)
+	assert.Contains(t, got, expectedArgv,
+		"tool %q with args %v should produce CLI argv %q; got: %s", name, args, expectedArgv, got)
+}
 
-	// Create tool request
-	request := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      tool,
-			"arguments": testCase.params,
-		},
-	}
+// expectError asserts the tool returns a structured error containing `msg`.
+func expectError(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any, msg string) {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = args
+	res, err := c.CallTool(ctx, req)
+	require.NoError(t, err)
+	require.True(t, res.IsError, "expected tool error, got success: %v", res.Content)
 
-	// Marshal request to JSON
-	requestJSON, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("Failed to marshal request: %v", err)
-	}
+	text, ok := mcp.AsTextContent(res.Content[0])
+	require.True(t, ok)
+	assert.Contains(t, strings.ToLower(text.Text), strings.ToLower(msg))
+}
 
-	// Send request
-	if _, err := stdin.Write(append(requestJSON, '\n')); err != nil {
-		t.Fatalf("Failed to write request: %v", err)
-	}
+func TestReadOnlyTools(t *testing.T) {
+	c, ctx := newTestClient(t)
 
-	// Read response
-	var response map[string]interface{}
-	dec := json.NewDecoder(stdout)
-	if err := dec.Decode(&response); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
+	expect(t, c, ctx, "version", nil, "balena version")
+	expect(t, c, ctx, "whoami", nil, "balena whoami")
+	expect(t, c, ctx, "organization-list", nil, "balena organization list")
+	expect(t, c, ctx, "ssh-key-list", nil, "balena ssh-key list")
 
-	// Check for error in response
-	if errObj, ok := response["error"]; ok {
-		if testCase.expectedErr != nil {
-			assert.Error(t, fmt.Errorf("%v", errObj))
-		} else {
-			t.Fatalf("Unexpected error: %v", errObj)
+	// fleet-list
+	expect(t, c, ctx, "fleet-list", nil, "balena fleet list")
+	expect(t, c, ctx, "fleet-list", map[string]any{"json": true}, "balena fleet list --json")
+
+	// fleet-info
+	expect(t, c, ctx, "fleet-info",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet myorg/myfleet")
+	expect(t, c, ctx, "fleet-info",
+		map[string]any{"fleet": "myorg/myfleet", "json": true},
+		"balena fleet myorg/myfleet --json")
+
+	// device-list
+	expect(t, c, ctx, "device-list", nil, "balena device list")
+	expect(t, c, ctx, "device-list",
+		map[string]any{"fleet": "my-fleet"},
+		"balena device list --fleet my-fleet")
+	expect(t, c, ctx, "device-list",
+		map[string]any{"json": true},
+		"balena device list --json")
+
+	// device-info
+	expect(t, c, ctx, "device-info",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device 7cf02a6")
+
+	// device-logs
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device"},
+		"balena device logs my-device")
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "service": "my-service"},
+		"balena device logs my-device --service my-service")
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "system": true},
+		"balena device logs my-device --system")
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "tail": true},
+		"balena device logs my-device --tail")
+
+	// device-type-list
+	expect(t, c, ctx, "device-type-list",
+		map[string]any{"all": true, "json": true},
+		"balena device-type list --all --json")
+
+	// os-versions
+	expect(t, c, ctx, "os-versions",
+		map[string]any{"type": "raspberrypi4"},
+		"balena os versions raspberrypi4")
+	expect(t, c, ctx, "os-versions",
+		map[string]any{"type": "raspberrypi4", "esr": true},
+		"balena os versions raspberrypi4 --esr")
+	expect(t, c, ctx, "os-versions",
+		map[string]any{"type": "raspberrypi4", "include_draft": true},
+		"balena os versions raspberrypi4 --include-draft")
+
+	// release-list / release-info
+	expect(t, c, ctx, "release-list",
+		map[string]any{"fleet": "my-fleet"},
+		"balena release list my-fleet")
+	expect(t, c, ctx, "release-info",
+		map[string]any{"id": "123"},
+		"balena release 123")
+	expect(t, c, ctx, "release-info",
+		map[string]any{"id": "123", "composition": true},
+		"balena release 123 --composition")
+
+	// release-asset-list
+	expect(t, c, ctx, "release-asset-list",
+		map[string]any{"id": "123"},
+		"balena release-asset list 123")
+
+	// tag-list — exercises the flag-based form (was positional in the old fork)
+	expect(t, c, ctx, "tag-list",
+		map[string]any{"device": "7cf02a6"},
+		"balena tag list --device 7cf02a6")
+	expect(t, c, ctx, "tag-list",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena tag list --fleet myorg/myfleet")
+	expect(t, c, ctx, "tag-list",
+		map[string]any{"release": "1234"},
+		"balena tag list --release 1234")
+
+	// env-list
+	expect(t, c, ctx, "env-list",
+		map[string]any{"fleet": "my-fleet"},
+		"balena env list --fleet my-fleet")
+	expect(t, c, ctx, "env-list",
+		map[string]any{"device": "7cf02a6", "service": "my-service"},
+		"balena env list --device 7cf02a6 --service my-service")
+
+	// api-key-list
+	expect(t, c, ctx, "api-key-list", nil, "balena api-key list")
+	expect(t, c, ctx, "api-key-list",
+		map[string]any{"fleet": "my-fleet"},
+		"balena api-key list --fleet my-fleet")
+}
+
+func TestMutatingTools(t *testing.T) {
+	c, ctx := newTestClient(t)
+
+	// device lifecycle
+	expect(t, c, ctx, "device-reboot",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device reboot 7cf02a6")
+	expect(t, c, ctx, "device-reboot",
+		map[string]any{"uuid": "7cf02a6", "force": true},
+		"balena device reboot 7cf02a6 --force")
+	expect(t, c, ctx, "device-restart",
+		map[string]any{"uuid": "7cf02a6", "service": "my-service"},
+		"balena device restart 7cf02a6 --service my-service")
+	expect(t, c, ctx, "device-shutdown",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device shutdown 7cf02a6")
+	expect(t, c, ctx, "device-purge",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device purge 7cf02a6")
+
+	// pin
+	expect(t, c, ctx, "device-pin",
+		map[string]any{"uuid": "7cf02a6", "release": "abc123"},
+		"balena device pin 7cf02a6 abc123")
+	expect(t, c, ctx, "fleet-pin",
+		map[string]any{"fleet": "myorg/myfleet", "release": "abc123"},
+		"balena fleet pin myorg/myfleet abc123")
+
+	// release finalize
+	expect(t, c, ctx, "release-finalize",
+		map[string]any{"id": "123"},
+		"balena release finalize 123")
+
+	// tag-set / tag-rm
+	expect(t, c, ctx, "tag-set",
+		map[string]any{"key": "owner", "value": "ops", "fleet": "my-fleet"},
+		"balena tag set owner ops --fleet my-fleet")
+	expect(t, c, ctx, "tag-set",
+		map[string]any{"key": "owner", "device": "7cf02a6"},
+		"balena tag set owner --device 7cf02a6")
+	expect(t, c, ctx, "tag-rm",
+		map[string]any{"key": "owner", "fleet": "my-fleet"},
+		"balena tag rm owner --fleet my-fleet")
+
+	// env-set / env-rm
+	expect(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet"},
+		"balena env set DEBUG 1 --fleet my-fleet")
+	expect(t, c, ctx, "env-rm",
+		map[string]any{"id": float64(42), "yes": true},
+		"balena env rm 42 --yes")
+}
+
+func TestErrors(t *testing.T) {
+	c, ctx := newTestClient(t)
+
+	// Missing required arg
+	expectError(t, c, ctx, "device-info", nil, "uuid")
+	expectError(t, c, ctx, "release-info", nil, "id")
+	expectError(t, c, ctx, "device-reboot", nil, "uuid")
+
+	// tag-list / tag-set / tag-rm — exactly-one-of fleet|device|release
+	expectError(t, c, ctx, "tag-list", nil, "one of")
+	expectError(t, c, ctx, "tag-list",
+		map[string]any{"fleet": "f", "device": "d"}, "exactly one")
+	expectError(t, c, ctx, "tag-set",
+		map[string]any{"key": "owner"}, "one of")
+	expectError(t, c, ctx, "tag-set",
+		map[string]any{"key": "owner", "fleet": "f", "release": "r"}, "exactly one")
+	expectError(t, c, ctx, "tag-rm",
+		map[string]any{"key": "owner"}, "one of")
+
+	// env-list / env-set — exactly-one-of fleet|device
+	expectError(t, c, ctx, "env-list", nil, "one of")
+	expectError(t, c, ctx, "env-list",
+		map[string]any{"fleet": "f", "device": "d"}, "exactly one")
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "value": "1"}, "one of")
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "fleet": "f", "device": "d"}, "exactly one")
+
+	// Flag-shape guard: identifiers that start with '-' must be rejected, both
+	// on positional args and on flag-value args (via pickResource).
+	expectError(t, c, ctx, "device-info",
+		map[string]any{"uuid": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "tag-list",
+		map[string]any{"fleet": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "release-finalize",
+		map[string]any{"id": "-1"}, "cannot start with '-'")
+}
+
+// TestAnnotationsInvariant asserts that every advertised tool carries exactly
+// one of the read-only / destructive hints. mcp-go's default annotations have
+// both fields preset (ReadOnlyHint=false, DestructiveHint=true), so a tool
+// registered without going through our readOnly/destructive helpers would slip
+// through as "destructive" even if it shouldn't be. This test catches that.
+func TestAnnotationsInvariant(t *testing.T) {
+	c, ctx := newTestClient(t)
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Tools, "no tools advertised")
+
+	for _, tool := range res.Tools {
+		ro := tool.Annotations.ReadOnlyHint
+		de := tool.Annotations.DestructiveHint
+		if ro == nil || de == nil {
+			t.Errorf("tool %q has unset annotation hint (readOnly=%v destructive=%v)",
+				tool.Name, ro, de)
+			continue
 		}
-		return
-	}
-
-	// Get result from response
-	result, ok := response["result"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("Invalid response format: %v", response)
-	}
-
-	// Get content from result
-	content, ok := result["content"].([]interface{})
-	if !ok {
-		t.Fatalf("Invalid result format: %v", result)
-	}
-
-	// Get text from content
-	if len(content) == 0 {
-		t.Fatalf("Empty content in result: %v", result)
-	}
-
-	contentItem, ok := content[0].(map[string]interface{})
-	if !ok {
-		t.Fatalf("Invalid content format: %v", content[0])
-	}
-
-	text, ok := contentItem["text"].(string)
-	if !ok {
-		t.Fatalf("Invalid text format: %v", contentItem)
-	}
-
-	// Verify command output
-	assert.Contains(t, text, testCase.expectedCmd, "command should match expected")
-}
-
-// Main test functions
-func TestDeviceCommands(t *testing.T) {
-	cases := exampleCommands["device-list"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "device-list", tc)
-		})
-	}
-}
-
-func TestDeviceLogsCommands(t *testing.T) {
-	cases := exampleCommands["device-logs"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "device-logs", tc)
-		})
-	}
-}
-
-func TestFleetCommands(t *testing.T) {
-	cases := exampleCommands["fleet-list"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "fleet-list", tc)
-		})
-	}
-}
-
-func TestOSVersionsCommands(t *testing.T) {
-	cases := exampleCommands["os-versions"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "os-versions", tc)
-		})
-	}
-}
-
-func TestReleaseCommands(t *testing.T) {
-	cases := exampleCommands["release-list"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "release-list", tc)
-		})
-	}
-}
-
-func TestReleaseInfoCommands(t *testing.T) {
-	cases := exampleCommands["release-info"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "release-info", tc)
-		})
-	}
-}
-
-func TestVersionCommands(t *testing.T) {
-	cases := exampleCommands["version"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "version", tc)
-		})
-	}
-}
-
-func TestTagCommands(t *testing.T) {
-	cases := exampleCommands["tag-list"]
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runCommandTest(t, "tag-list", tc)
-		})
+		if *ro == *de {
+			t.Errorf("tool %q must have exactly one of readOnlyHint/destructiveHint true (got both=%v)",
+				tool.Name, *ro)
+		}
 	}
 }
