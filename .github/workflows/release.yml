@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual fallback: re-run a release for an existing tag (e.g. when a
+  # previous run failed mid-flight).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.2.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Releases must NOT cancel each other — a half-uploaded release is harder
+  # to recover from than letting two runs serialize.
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # -s -w strips the debug+symbol tables; cuts the binary roughly in half.
+          # Plain stdlib build, no cgo needed.
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          name="balenamcp-${{ matrix.target }}${{ matrix.ext }}"
+          go build -trimpath -ldflags="-s -w" -o "dist/$name" .
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balenamcp-${{ matrix.target }}
+          path: dist/balenamcp-${{ matrix.target }}*
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: publish github release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no artifacts to attach"
+            exit 1
+          fi
+          # Idempotent: if the release already exists, refresh its assets.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists; updating assets."
+            gh release upload "$TAG" --repo "$REPO" --clobber "${files[@]}"
+          else
+            echo "Creating release $TAG."
+            gh release create "$TAG" \
+              --repo "$REPO" \
+              --title "$TAG" \
+              --generate-notes \
+              "${files[@]}"
+          fi

@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (gofmt + vet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod/go.sum drifted; run 'go mod tidy' locally and commit"
+            exit 1
+          fi
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go test
+        run: go test -race -count=1 ./...
+
+  mcp-smoke:
+    # End-to-end smoke test: build the binary, spawn it, send JSON-RPC
+    # initialize + tools/list, assert the advertised tool inventory and
+    # spot-check annotations. Catches schema-emission regressions that the
+    # in-process unit tests cannot — those exercise the Go types directly,
+    # this exercises the actual stdio transport.
+    name: mcp smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        shell: bash
+        env:
+          BIN: ${{ runner.os == 'Windows' && './bin/balenamcp.exe' || './bin/balenamcp' }}
+        run: go build -o "$BIN" .
+
+      - name: Drive server via stdio JSON-RPC and assert tool inventory
+        # bash + jq are preinstalled on all three GitHub-hosted runners.
+        # Forcing shell: bash so the Windows runner uses Git Bash, not pwsh.
+        shell: bash
+        env:
+          BIN: ${{ runner.os == 'Windows' && './bin/balenamcp.exe' || './bin/balenamcp' }}
+        run: |
+          set -euo pipefail
+          # Send initialize, the initialized notification, then tools/list.
+          # The server emits one JSON object per request (none for notifications);
+          # we read the second response line which is the tools/list result.
+          response=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+
+          echo "tools/list response:"
+          echo "$response" | jq '.result.tools | length as $n | "\($n) tools advertised"'
+
+          # Required tools (the user-facing surface). Failing here means a
+          # tool was dropped or renamed without test coverage.
+          required=(
+            version whoami fleet-list fleet-info device-list device-info
+            device-logs device-type-list release-list release-info
+            release-asset-list tag-list env-list os-versions
+            organization-list ssh-key-list api-key-list
+            device-reboot device-restart device-shutdown device-purge
+            device-pin fleet-pin release-finalize tag-set tag-rm
+            env-set env-rm
+          )
+          missing=()
+          for t in "${required[@]}"; do
+            if ! echo "$response" | jq -e --arg t "$t" '.result.tools[] | select(.name == $t)' >/dev/null; then
+              missing+=("$t")
+            fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::missing tools: ${missing[*]}"
+            exit 1
+          fi
+
+          # Spot-check annotation correctness: device-list must be read-only,
+          # device-reboot must be destructive.
+          ro=$(echo "$response" | jq -r '.result.tools[] | select(.name == "device-list") | .annotations.readOnlyHint')
+          [ "$ro" = "true" ] || { echo "::error::device-list is not readOnlyHint=true (got $ro)"; exit 1; }
+          de=$(echo "$response" | jq -r '.result.tools[] | select(.name == "device-reboot") | .annotations.destructiveHint')
+          [ "$de" = "true" ] || { echo "::error::device-reboot is not destructiveHint=true (got $de)"; exit 1; }
+
+          # Also drive one tool call end-to-end through stdio in dry-run.
+          call=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"device-list","arguments":{"fleet":"my-fleet","json":true}}}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+          text=$(echo "$call" | jq -r '.result.content[0].text')
+          echo "device-list dry-run -> $text"
+          echo "$text" | grep -q -- '--fleet my-fleet --json' \
+            || { echo "::error::dry-run argv unexpected: $text"; exit 1; }
+
+  ci-required-checks:
+    # Single check for branch protection to gate on. Aggregates lint + test
+    # + mcp-smoke. Add new required jobs by extending `needs` — nothing else
+    # to change.
+    name: ci required checks passed
+    if: always()
+    needs: [lint, test, mcp-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check required jobs passed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          failing=$(echo "$NEEDS_JSON" | jq -r '
+            to_entries[]
+            | select(.value.result != "success" and .value.result != "skipped")
+            | "\(.key): \(.value.result)"
+          ')
+          if [ -n "$failing" ]; then
+            echo "Failed or cancelled jobs:"
+            echo "$failing"
+            exit 1
+          fi
+          echo "All required jobs passed."
