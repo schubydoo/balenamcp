@@ -58,20 +58,30 @@ jobs:
         run: gremlins --version
 
       - name: Run mutation testing
-        # --integration runs the FULL test suite for each mutant. This repo's
-        # tests are cross-package (main_test.go exercises the server pkg),
-        # so the default "only run tests covering the mutated line" mode
-        # under-runs. Integration mode pays the runtime cost but exercises
-        # every assertion we have against every mutant.
+        # --coverpkg=./... is mandatory for this repo. Gremlins gathers
+        # coverage with `go test -cover -coverprofile=...` and uses the
+        # result to decide which mutants are worth running. Our suite is
+        # cross-package (main_test.go in package `main` exercises the
+        # `server` package through MCP transport), and without -coverpkg
+        # Go credits those hits only to `main`'s profile, leaving server/*
+        # lines as count=0. Gremlins then classifies every server mutant
+        # as NOT COVERED and runs nothing — that's exactly what happened
+        # on the first attempt of this workflow.
         #
-        # --output yields machine-readable JSON for the artifact upload.
-        # --threshold-efficacy gates the exit code on caller-supplied % so
-        # scheduled runs can be report-only while explicit dispatches with
-        # a non-zero floor can enforce a quality bar.
+        # --integration runs the FULL test suite for each mutant rather
+        # than the subset gremlins would heuristically pick. Necessary
+        # here because the cross-package assertion path doesn't survive
+        # gremlins' per-line test selection.
+        #
+        # --output emits machine-readable JSON for the artifact upload.
+        # --threshold-efficacy gates the exit code on the caller-supplied
+        # percent — scheduled runs stay report-only at 0; explicit
+        # dispatches can pin a quality bar.
         run: |
           set -euo pipefail
           gremlins unleash \
             --integration \
+            --coverpkg=./... \
             --workers=2 \
             --output=gremlins.json \
             --threshold-efficacy=${{ inputs.fail-under-efficacy || '0' }} \
