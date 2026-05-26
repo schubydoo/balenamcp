@@ -120,6 +120,15 @@ func TestReadOnlyTools(t *testing.T) {
 	expect(t, c, ctx, "device-logs",
 		map[string]any{"device": "my-device", "tail": true},
 		"balena device logs my-device --tail")
+	// max_retry boundary cases — gremlins caught that no test exercised the
+	// `if v >= 0` arm. 0 is the documented "disable auto-reconnect" sentinel
+	// (still >= 0, distinct from the absent case), 5 is a typical positive.
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "max_retry": float64(0)},
+		"balena device logs my-device --max-retry 0")
+	expect(t, c, ctx, "device-logs",
+		map[string]any{"device": "my-device", "max_retry": float64(5)},
+		"balena device logs my-device --max-retry 5")
 
 	// device-type-list
 	expect(t, c, ctx, "device-type-list",
@@ -227,6 +236,11 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "env-set",
 		map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet"},
 		"balena env set DEBUG 1 --fleet my-fleet")
+	// env-set with --service — gremlins flagged the `if service != "" {`
+	// branch as lived because nothing exercised the truthy arm.
+	expect(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet", "service": "api"},
+		"balena env set DEBUG 1 --fleet my-fleet --service api")
 	expect(t, c, ctx, "env-rm",
 		map[string]any{"id": float64(42), "yes": true},
 		"balena env rm 42 --yes")
