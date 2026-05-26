@@ -230,6 +230,51 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "env-rm",
 		map[string]any{"id": float64(42), "yes": true},
 		"balena env rm 42 --yes")
+
+	// Optional-arg branches: device-pin and fleet-pin both accept an optional
+	// release; omitting it should produce just the verb + identifier.
+	expect(t, c, ctx, "device-pin",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device pin 7cf02a6")
+	expect(t, c, ctx, "fleet-pin",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet pin myorg/myfleet")
+}
+
+// TestConfirmGate_AllDestructiveTools sweeps the BALENAMCP_REQUIRE_CONFIRM
+// gate across every destructive tool to confirm the requireConfirm guard is
+// wired into each closure (and not just device-reboot, which the focused
+// TestConfirmGate case covers). Cheaper than 11 hand-written subtests and
+// guards against the "I added a new destructive tool but forgot the guard"
+// regression class.
+func TestConfirmGate_AllDestructiveTools(t *testing.T) {
+	t.Setenv("BALENAMCP_REQUIRE_CONFIRM", "1")
+	c, ctx := newTestClient(t)
+
+	// Minimum args to get each tool past its own validation but still hit the
+	// gate. Args intentionally avoid mutual-exclusion errors so the only
+	// rejection cause should be the confirm gate.
+	cases := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"device-reboot", map[string]any{"uuid": "7cf02a6"}},
+		{"device-restart", map[string]any{"uuid": "7cf02a6"}},
+		{"device-shutdown", map[string]any{"uuid": "7cf02a6"}},
+		{"device-purge", map[string]any{"uuid": "7cf02a6"}},
+		{"device-pin", map[string]any{"uuid": "7cf02a6"}},
+		{"fleet-pin", map[string]any{"fleet": "myorg/myfleet"}},
+		{"release-finalize", map[string]any{"id": "123"}},
+		{"tag-set", map[string]any{"key": "owner", "fleet": "my-fleet"}},
+		{"tag-rm", map[string]any{"key": "owner", "fleet": "my-fleet"}},
+		{"env-set", map[string]any{"name": "DEBUG", "fleet": "my-fleet"}},
+		{"env-rm", map[string]any{"id": float64(42)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			expectError(t, c, ctx, tc.tool, tc.args, "requires explicit confirmation")
+		})
+	}
 }
 
 func TestErrors(t *testing.T) {

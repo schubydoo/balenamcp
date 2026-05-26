@@ -331,6 +331,76 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	}
 }
 
+// TestLoadConfigFromEnv_RequireConfirm covers the truthy-parsing logic for
+// BALENAMCP_REQUIRE_CONFIRM, including the "garbage falls back to off" branch
+// (mirrors the EXEC_TIMEOUT case but for the boolean parser).
+func TestLoadConfigFromEnv_RequireConfirm(t *testing.T) {
+	cases := []struct {
+		envVal string
+		want   bool
+	}{
+		{"", false},          // unset
+		{"1", true},          // ParseBool truthy
+		{"true", true},       // ParseBool truthy
+		{"TRUE", true},       // case-insensitive
+		{"0", false},         // ParseBool false
+		{"false", false},     // ParseBool false
+		{"nonsense", false},  // garbage -> warn + default off
+	}
+	for _, tc := range cases {
+		t.Run(tc.envVal, func(t *testing.T) {
+			t.Setenv("BALENAMCP_REQUIRE_CONFIRM", tc.envVal)
+			loadConfigFromEnv()
+			if Config.RequireConfirm != tc.want {
+				t.Errorf("env=%q want %v got %v", tc.envVal, tc.want, Config.RequireConfirm)
+			}
+		})
+	}
+}
+
+// TestExecuteCommand_ZeroTimeoutFallback covers the defensive guard in
+// executeCommand that swaps in defaultExecTimeout when Config.ExecTimeout is
+// non-positive (e.g. a programmer calls the helper before loadConfigFromEnv
+// has run). We force an error with a pre-cancelled parent context — works
+// regardless of whether `balena` is installed on the host — and verify
+// executeCommand returned cleanly (didn't deadlock or panic in the fallback).
+func TestExecuteCommand_ZeroTimeoutFallback(t *testing.T) {
+	origDry, origTO := Config.DryRun, Config.ExecTimeout
+	Config.DryRun = false
+	Config.ExecTimeout = 0 // force the fallback branch
+	defer func() { Config.DryRun, Config.ExecTimeout = origDry, origTO }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := executeCommand(ctx, []string{"version"})
+	if err == nil {
+		t.Fatalf("expected error from cancelled context with zero-timeout fallback, got nil")
+	}
+}
+
+// TestRunCmd_ErrorPath covers the err != nil branch in runCmd. We trigger a
+// deterministic error via a pre-cancelled context (works whether or not
+// balena is on PATH) and verify runCmd converts the Go error into a tool-
+// result with IsError=true, per the MCP convention that a Go-level error
+// from the handler aborts dispatch entirely.
+func TestRunCmd_ErrorPath(t *testing.T) {
+	orig := Config.DryRun
+	Config.DryRun = false
+	defer func() { Config.DryRun = orig }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := runCmd(ctx, []string{"version"})
+	if err != nil {
+		t.Fatalf("runCmd should swallow CLI errors into a tool-result, got Go error: %v", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("expected IsError tool result, got: %+v", res)
+	}
+}
+
 // ----- helpers -----------------------------------------------------------
 
 func equalSlice(a, b []string) bool {
