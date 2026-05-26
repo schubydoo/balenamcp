@@ -79,13 +79,18 @@ jobs:
         # dispatches can pin a quality bar.
         run: |
           set -euo pipefail
+          # NOTE: the positional argument is a filesystem DIRECTORY, not a Go
+          # package pattern. Passing `./...` makes gremlins try to walk a
+          # literal directory named `./...`, finds no .go files, and exits
+          # with "No results to report." (Lost ~30min to this in the first
+          # iterations of the workflow.) Omit the path arg entirely so
+          # gremlins defaults to the module root.
           gremlins unleash \
             --integration \
             --coverpkg=./... \
             --workers=2 \
             --output=gremlins.json \
-            --threshold-efficacy=${{ inputs.fail-under-efficacy || '0' }} \
-            ./...
+            --threshold-efficacy=${{ inputs.fail-under-efficacy || '0' }}
 
       - name: Summarize results
         if: always()
