@@ -339,13 +339,13 @@ func TestLoadConfigFromEnv_RequireConfirm(t *testing.T) {
 		envVal string
 		want   bool
 	}{
-		{"", false},          // unset
-		{"1", true},          // ParseBool truthy
-		{"true", true},       // ParseBool truthy
-		{"TRUE", true},       // case-insensitive
-		{"0", false},         // ParseBool false
-		{"false", false},     // ParseBool false
-		{"nonsense", false},  // garbage -> warn + default off
+		{"", false},         // unset
+		{"1", true},         // ParseBool truthy
+		{"true", true},      // ParseBool truthy
+		{"TRUE", true},      // case-insensitive
+		{"0", false},        // ParseBool false
+		{"false", false},    // ParseBool false
+		{"nonsense", false}, // garbage -> warn + default off
 	}
 	for _, tc := range cases {
 		t.Run(tc.envVal, func(t *testing.T) {
