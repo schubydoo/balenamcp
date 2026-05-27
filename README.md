@@ -1,9 +1,10 @@
 # BalenaMCP
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that wraps
-the [balena CLI](https://github.com/balena-io/balena-cli) so MCP-aware clients
-(Claude Desktop, etc.) can list fleets, inspect devices, manage tags and env
-vars, pin releases, reboot devices, and more.
+the [balena CLI](https://github.com/balena-io/balena-cli) so MCP-aware agents
+(Claude Code, Claude Desktop, Cursor, Continue, Cline, Goose, etc.) can list
+fleets, inspect devices, manage tags and env vars, pin releases, reboot
+devices, and more.
 
 This is a personal fork of [klutchell/balenamcp](https://github.com/klutchell/balenamcp)
 brought up to date with the current balena CLI and the current `mark3labs/mcp-go`.
@@ -11,7 +12,7 @@ brought up to date with the current balena CLI and the current `mark3labs/mcp-go
 ## Prerequisites
 
 - [`balena` CLI](https://github.com/balena-io/balena-cli) on `PATH`
-- An MCP client (e.g. Claude Desktop)
+- An MCP-aware agent or IDE (Claude Code, Claude Desktop, Cursor, …)
 - Go 1.23+ (only if you're building from source — pre-built binaries don't require it)
 
 ## Install
@@ -130,23 +131,77 @@ balena login
 The MCP server inherits that session by shelling out to the same `balena`
 binary.
 
-## Claude Desktop config
+## MCP client setup
 
-Add this to `claude_desktop_config.json` (macOS:
-`~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
+The server speaks stdio JSON-RPC — any MCP-compliant client wires it up the
+same way: point at the binary, optionally pass args, restart the client.
+Specifics below.
+
+### Claude Code
+
+CLI (recommended):
+
+```sh
+claude mcp add balena /absolute/path/to/balenamcp
+```
+
+That edits `~/.claude.json` for you. Use `claude mcp add balena --scope project ...`
+to scope it to the current repo (`.mcp.json` in repo root) instead.
+
+Or edit `~/.claude.json` by hand:
 
 ```json
 {
   "mcpServers": {
     "balena": {
-      "command": "/absolute/path/to/balenamcp/bin/balenamcp",
+      "command": "/absolute/path/to/balenamcp",
       "args": []
     }
   }
 }
 ```
 
-Restart Claude Desktop. The tools below appear under the `balena` server.
+The tools appear in the next Claude Code session. Run `/mcp` to confirm.
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+| OS | Path |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux* | `~/.config/Claude/claude_desktop_config.json` |
+
+\* Claude Desktop on Linux is unofficial; the path mirrors the XDG location
+that community builds use.
+
+```json
+{
+  "mcpServers": {
+    "balena": {
+      "command": "/absolute/path/to/balenamcp",
+      "args": []
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The tools appear under the `balena` server.
+
+### Other MCP clients
+
+Setup is similar — point the client at the binary as a stdio MCP server.
+Consult each tool's docs for the exact config file / command:
+
+- **[Cursor](https://docs.cursor.com/context/model-context-protocol)** — Settings → MCP → Add server, or `~/.cursor/mcp.json`
+- **[Continue](https://docs.continue.dev/customize/deep-dives/mcp)** — `mcpServers` block in `~/.continue/config.yaml`
+- **[Cline](https://github.com/cline/cline)** — VS Code settings under `cline.mcpServers`
+- **[Goose](https://block.github.io/goose/docs/getting-started/using-extensions)** — `goose configure` (interactive) or `~/.config/goose/config.yaml`
+- **[LibreChat](https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/mcp_servers)** — `mcpServers:` in `librechat.yaml`
+
+If your client supports MCP via stdio, the binary will work — there's
+nothing balenamcp-specific about the wiring.
 
 ## Tools
 
@@ -267,16 +322,35 @@ $ # ... goreleaser publishes binaries + SBOMs + signatures to GH Releases
 
 ## Troubleshooting
 
-- Claude Desktop log: `%APPDATA%\Claude\logs\mcp-server-balena.log` (Windows) /
-  `~/Library/Logs/Claude/mcp-server-balena.log` (macOS).
-- If a tool errors with "balena CLI error: exec: not found", the binary is not
-  on `PATH` for the user running Claude Desktop.
-- Auth errors → `balena login` again.
-- **"We need to slow down your requests temporarily."** — balenaCloud
+### Where to find the server's logs
+
+Logs land wherever the MCP host writes them:
+
+| Client | Path |
+|---|---|
+| Claude Desktop, macOS | `~/Library/Logs/Claude/mcp-server-balena.log` |
+| Claude Desktop, Windows | `%APPDATA%\Claude\logs\mcp-server-balena.log` |
+| Claude Desktop, Linux | `~/.config/Claude/logs/mcp-server-balena.log` |
+| Claude Code | `claude --mcp-debug` enables verbose MCP logging to the current session; persistent logs live in `~/.claude/projects/<encoded-cwd>/` |
+| Cursor / Continue / others | Check each client's own log dir; the server itself writes only its startup line to stderr |
+
+### Common errors
+
+- **`balena CLI error: exec: not found`** — the `balena` binary isn't on
+  `PATH` for whatever user the MCP host runs the server as. For desktop
+  apps that's the GUI's `PATH`, not your shell's. Add a symlink to
+  `/usr/local/bin/balena` or set the absolute path in the client's MCP
+  config under `env` / `command`.
+- **Auth errors** — `balena login` again on the host where the server runs.
+- **`We need to slow down your requests temporarily.`** — balenaCloud
   rate-limits fast sequential calls. The server doesn't queue or back off;
   it surfaces the message as the tool result. Wait a few seconds and retry,
   or pace the agent's calls. Most noticeable when sweeping many tools in a
   row (e.g. validation runs).
+- **Tool annotated as destructive but the client didn't prompt** — set
+  `BALENAMCP_REQUIRE_CONFIRM=1` in the server's env (via the client's MCP
+  `env:` block) so the server itself refuses destructive calls without
+  `confirm: true` in the arguments. Documented above.
 
 ## License
 
