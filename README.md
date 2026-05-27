@@ -72,7 +72,38 @@ Restart Claude Desktop. The tools below appear under the `balena` server.
 
 ## Tools
 
+> ### ⚠️ Destructive tools — read this first
+>
+> **12 of the 29 tools change state on real devices or in balenaCloud.** A
+> reboot or `device-purge` can't be undone from inside the model. Every
+> destructive tool is flagged with `destructiveHint: true` in its MCP
+> annotation, and Claude Desktop (and other compliant MCP clients) prompts
+> you for confirmation before running them.
+>
+> | Tool | Effect | Reversible? |
+> |---|---|---|
+> | `device-reboot` | Remote reboot | yes (device comes back up) |
+> | `device-restart` | Restart containers (no reboot) | yes |
+> | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
+> | `device-purge` | **Wipe `/data` on the device** | **no — data is gone** |
+> | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
+> | `device-track-fleet` | Drop a device's pin and resume tracking the fleet's release | yes (`device-pin` again) |
+> | `fleet-pin` | Pin a fleet to a specific release | yes |
+> | `release-finalize` | Promote a draft release to final | **no — finals can't be un-finalized** |
+> | `tag-set` | Create or update a tag | yes (`tag-rm`) |
+> | `tag-rm` | Remove a tag | yes (`tag-set`) |
+> | `env-set` | Set/update an env or config variable | yes (`env-rm` or `env-set` again) |
+> | `env-rm` | Delete an env or config variable (needs `yes: true` to bypass the CLI's confirm prompt) | yes (`env-set` again) |
+>
+> **Belt-and-suspenders gate:** set `BALENAMCP_REQUIRE_CONFIRM=1` and every
+> destructive tool will refuse to run unless the call carries
+> `confirm: true` in its arguments. Useful with MCP clients that don't
+> honor `destructiveHint`.
+
 ### Read-only
+
+The remaining 17 tools are read-only — they shell out to balena with no
+state change. Safe to call without confirmation.
 
 | Tool | Purpose |
 |---|---|
@@ -82,7 +113,7 @@ Restart Claude Desktop. The tools below appear under the `balena` server.
 | `fleet-info` | Detailed info for one fleet |
 | `device-list` | List devices, optionally filtered by fleet |
 | `device-info` | Detailed info for one device |
-| `device-logs` | Recent historical logs from a device, optionally per-service. Streaming (`--tail`) is not supported over MCP — run the balena CLI directly for continuous monitoring. |
+| `device-logs` | Recent historical logs from a device, optionally per-service. Streaming (`--tail`) is not supported over MCP — run the balena CLI directly for continuous monitoring. **Note:** this tool's identifier arg is named `device` (accepts UUID, IP, or `.local` address) while every other `device-*` tool uses `uuid`. Kept this way to match the broader argument shape balena's CLI accepts here. |
 | `device-type-list` | Supported balena device types |
 | `release-list` | Releases of a fleet |
 | `release-info` | Metadata or composition of one release |
@@ -94,21 +125,7 @@ Restart Claude Desktop. The tools below appear under the `balena` server.
 | `ssh-key-list` | SSH keys registered in balenaCloud |
 | `api-key-list` | balenaCloud API keys |
 
-### Mutating (marked `destructiveHint` so well-behaved MCP clients confirm before invoking)
-
-| Tool | Effect |
-|---|---|
-| `device-reboot` | Remote reboot |
-| `device-restart` | Restart containers (no reboot) |
-| `device-shutdown` | Remote shutdown (manual power cycle to recover) |
-| `device-purge` | Wipe `/data` on the device |
-| `device-pin` | Pin a device to a specific release |
-| `fleet-pin` | Pin a fleet to a specific release |
-| `release-finalize` | Promote a draft release to final |
-| `tag-set` | Create or update a tag |
-| `tag-rm` | Remove a tag |
-| `env-set` | Set/update an env or config variable |
-| `env-rm` | Delete an env or config variable (needs `yes: true` to bypass the CLI's confirm prompt) |
+### Argument constraints
 
 `tag-list` / `tag-set` / `tag-rm` require **exactly one** of
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
@@ -118,14 +135,30 @@ of `fleet` / `device`.
 
 ```sh
 go build -o bin/balenamcp           # build
-go test ./...                       # unit/integration tests (uses in-process MCP client, dry-run)
+go test ./...                       # unit tests (in-process MCP client, dry-run)
 ```
+
+For a live end-to-end sweep against real balenaCloud (requires `balena login`
+and a sacrificial device):
+
+```sh
+BALENA_LIVE_FLEET=myorg/myfleet \
+BALENA_LIVE_DEVICE=<uuid> \
+BALENA_LIVE_RELEASE=<commit> \
+BALENA_LIVE_RELEASE_ALT=<other-commit> \
+  go test -tags=integration -v -count=1 -run TestLiveSweep .
+```
+
+Irreversible sub-tests (`device-purge`, `device-shutdown`, `release-finalize`)
+gate on additional `BALENA_LIVE_ALLOW_*` opt-in env vars and skip by default.
 
 Layout:
 
 - `main.go` — entry point, flag parsing, stdio transport
 - `server/setup.go` — all tool definitions
 - `main_test.go` — in-process MCP client driving every tool in dry-run mode
+- `livetest_test.go` — build-tagged (`integration`) end-to-end sweep against
+  real balenaCloud, opt-in via env vars
 
 ## Troubleshooting
 
@@ -134,6 +167,11 @@ Layout:
 - If a tool errors with "balena CLI error: exec: not found", the binary is not
   on `PATH` for the user running Claude Desktop.
 - Auth errors → `balena login` again.
+- **"We need to slow down your requests temporarily."** — balenaCloud
+  rate-limits fast sequential calls. The server doesn't queue or back off;
+  it surfaces the message as the tool result. Wait a few seconds and retry,
+  or pace the agent's calls. Most noticeable when sweeping many tools in a
+  row (e.g. validation runs).
 
 ## License
 
