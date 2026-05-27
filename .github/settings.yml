@@ -1,0 +1,105 @@
+# Probot settings — declarative repo configuration.
+# Applied by the "Settings" GitHub App: https://probot.github.io/apps/settings/
+# Changes here take effect when this file is pushed to the default branch.
+#
+# Schema reference: https://github.com/repository-settings/app
+
+repository:
+  name: balenamcp
+  description: MCP server wrapping the balena CLI — fleets, devices, releases, tags, env vars
+  homepage: https://github.com/schubydoo/balenamcp
+  topics: mcp, model-context-protocol, balena, balena-cli, mcp-server, golang, go, claude, claude-desktop
+
+  # Discussions/wiki/projects off — issues stay on for bug reports.
+  has_issues: true
+  has_projects: false
+  has_wiki: false
+  has_downloads: true
+
+  default_branch: main
+
+  # Merge button: squash + rebase only. Merge commits create noisy "Merge
+  # branch" entries; squash gives a single linear commit per PR.
+  allow_squash_merge: true
+  allow_merge_commit: false
+  allow_rebase_merge: true
+
+  # Use the PR title as the squash commit subject. Default for new repos but
+  # explicit here so it survives any future GitHub default flip.
+  squash_merge_commit_title: PR_TITLE
+  squash_merge_commit_message: PR_BODY
+
+  # Tidy up merged PR branches automatically.
+  delete_branch_on_merge: true
+
+  # No forks of a personal fork; keeps the fork chain clean.
+  allow_forking: true
+
+  # Web-commit signoff isn't enforced — local CLI commits are the norm.
+  web_commit_signoff_required: false
+
+# Labels — Dependabot / Renovate apply these automatically once they exist.
+# Without this block GitHub auto-creates labels with arbitrary colors on
+# first use; defining them here pins names + colors + descriptions.
+labels:
+  - name: dependencies
+    color: "0366d6"
+    description: Pull requests that update a dependency
+  - name: github-actions
+    color: "000000"
+    description: GitHub Actions workflow changes or action version bumps
+  - name: go
+    color: "00add8"
+    description: Go module updates or Go-language code changes
+  - name: bug
+    color: "d73a4a"
+    description: Something isn't working
+  - name: enhancement
+    color: "a2eeef"
+    description: New feature or improvement to an existing one
+  - name: documentation
+    color: "0075ca"
+    description: README / inline doc changes
+  - name: ci
+    color: "ededed"
+    description: CI / workflow changes
+  - name: security
+    color: "ee0701"
+    description: Security-relevant change or advisory
+
+# Branch protection — gates merges to main on the CI aggregator job.
+# Closes the "branch protection not yet configured" follow-up.
+branches:
+  - name: main
+    protection:
+      # Require the single aggregator status. Adding new required checks
+      # is done by extending `needs` in ci.yml's `ci required checks
+      # passed` job — no change here.
+      required_status_checks:
+        strict: true # PR branch must be up-to-date with main before merge
+        contexts:
+          - ci required checks passed
+
+      # Solo committer — requiring PR review of self is annoying. Drop to
+      # null so direct pushes to main still work for housekeeping, but PRs
+      # still gate on CI.
+      required_pull_request_reviews: null
+
+      # Linear history pairs with squash-only merging.
+      required_linear_history: true
+
+      # Force-pushes and branch deletion stay off on main.
+      allow_force_pushes: false
+      allow_deletions: false
+
+      # Conversation resolution and signed commits are nice-to-haves but
+      # would block solo workflow — leave off.
+      required_conversation_resolution: false
+      required_signatures: false
+
+      # Admin can still merge if CI is wedged; bypass is intentional on a
+      # personal repo. Flip to true if this ever becomes a shared repo.
+      enforce_admins: false
+
+      # No restrictions on who can push — solo repo.
+      restrictions: null
