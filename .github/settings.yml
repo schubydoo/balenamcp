@@ -6,8 +6,8 @@
 
 repository:
   name: balenamcp
-  description: MCP server wrapping the balena CLI — fleets, devices, releases, tags, env vars
-  homepage: https://github.com/schubydoo/balenamcp
+  description: >-
+    MCP server wrapping the balena CLI — fleets, devices, releases, tags, env vars
   # Topics: GitHub slugs disallow spaces. Probot passes the topics string
   # through to the API, and any topic with a leading space (e.g. ' balena'
   # after a comma+space) gets silently dropped — observed empirically:
@@ -16,34 +16,23 @@ repository:
   # value is exactly `a,b,c` with no internal spaces.
   topics: >-
     mcp,model-context-protocol,balena,balena-cli,mcp-server,golang,go,claude,claude-desktop
-
-  # Discussions/wiki/projects off — issues stay on for bug reports.
+  homepage: https://github.com/schubydoo/balenamcp
   has_issues: true
   has_projects: false
   has_wiki: false
   has_downloads: true
-
   default_branch: main
-
-  # Merge button: squash + rebase only. Merge commits create noisy "Merge
-  # branch" entries; squash gives a single linear commit per PR.
   allow_squash_merge: true
   allow_merge_commit: false
   allow_rebase_merge: true
-
-  # Use the PR title as the squash commit subject. Default for new repos but
-  # explicit here so it survives any future GitHub default flip.
+  allow_auto_merge: true
+  delete_branch_on_merge: true
+  allow_update_branch: true
+  # Squash button defaults: use PR title as subject, PR body as message. Both
+  # are the GitHub defaults for new repos but explicit here so they survive
+  # any future default flip.
   squash_merge_commit_title: PR_TITLE
   squash_merge_commit_message: PR_BODY
-
-  # Tidy up merged PR branches automatically.
-  delete_branch_on_merge: true
-
-  # No forks of a personal fork; keeps the fork chain clean.
-  allow_forking: true
-
-  # Web-commit signoff isn't enforced — local CLI commits are the norm.
-  web_commit_signoff_required: false
 
 # Labels — Dependabot / Renovate apply these automatically once they exist.
 # Without this block GitHub auto-creates labels with arbitrary colors on
@@ -91,36 +80,36 @@ labels:
 branches:
   - name: main
     protection:
-      # Require the single aggregator status. Adding new required checks
-      # is done by extending `needs` in ci.yml's `ci required checks
-      # passed` job — no change here.
-      required_status_checks:
-        strict: true # PR branch must be up-to-date with main before merge
-        contexts:
-          - ci required checks passed
-
-      # Solo committer — no review required. Spelled out as a full object
-      # (rather than `null`) so the Probot App can't trip over the null
-      # variant. `required_approving_review_count: 0` = effectively off.
       required_pull_request_reviews:
         required_approving_review_count: 0
-        dismiss_stale_reviews: false
+        dismiss_stale_reviews: true
         require_code_owner_reviews: false
-
-      # Linear history pairs with squash-only merging.
+      required_status_checks:
+        # Context names must match the check-run names GitHub records
+        # exactly — that's the job's `name:` field, not "workflow / job".
+        # The check must also have run on this repo at least once before
+        # it can be marked required.
+        #
+        # `ci required checks passed` is ci.yml's aggregator (needs:
+        # lint, test ×3 OS, mcp-smoke ×3 OS, coverage). Add a new ci.yml
+        # job by appending to that `needs:` list — do NOT add the
+        # individual check name here.
+        strict: true
+        contexts:
+          - "ci required checks passed"
+      # `null` (not `false`) — the Probot Settings App rejects `false`
+      # here silently. See repository-settings/app#923.
+      enforce_admins: null
       required_linear_history: true
-
-      # Force-pushes and branch deletion stay off on main.
       allow_force_pushes: false
       allow_deletions: false
-
-      # Conversation resolution and signed commits are nice-to-haves but
-      # would block solo workflow — leave off.
       required_conversation_resolution: false
-      required_signatures: false
-
-      # MUST be `null` (not `false`) — see top-of-block note.
-      enforce_admins: null
-
-      # MUST be `null` (not `false`) — same App parsing bug.
+      # `required_signatures` is intentionally OMITTED. It is NOT a valid
+      # field of the branch-protection PUT body (signatures are managed
+      # via a separate /required_signatures endpoint). Including it as
+      # `false` here caused GitHub to reject the whole protection payload
+      # — that's why no protection was applied on the previous push, and
+      # why the labels/description/merge-buttons applied (those use
+      # different API calls) but protection didn't.
+      # Same `null`-vs-empty-array gotcha; explicit `null` for safety.
       restrictions: null
