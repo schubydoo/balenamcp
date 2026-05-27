@@ -14,8 +14,20 @@
 # Go workspace file
 go.work
 
-# Build output directory
+# Build output directories
 bin/
+
+# goreleaser local-run artifacts. `goreleaser release --snapshot` writes
+# everything (archives, checksums, SBOMs, cosign bundles) under dist/.
+# Ignoring it lets us run goreleaser locally to verify config without
+# dirtying the working tree.
+dist/
+
+# Cosign signature bundles and CycloneDX SBOMs — released artifacts only;
+# they should never live in the source tree. Defensive pattern in case
+# someone curls a release asset down for verification testing.
+*.sigstore.json
+*.sbom.cdx.json
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
