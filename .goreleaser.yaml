@@ -1,0 +1,138 @@
+# Goreleaser config — builds, packages, signs, and publishes balenamcp.
+# https://goreleaser.com/customization/
+#
+# Pairs with release-please: release-please opens a "release PR", merging it
+# pushes a vX.Y.Z tag, the tag fires .github/workflows/release.yml, which
+# runs `goreleaser release`. `release.mode: append` means goreleaser uploads
+# artifacts to the release release-please already created without clobbering
+# the CHANGELOG-derived release notes.
+
+version: 2
+
+before:
+  hooks:
+    # Belt and suspenders against go.sum drift in CI — Renovate's
+    # `postUpdateOptions: ["gomodTidy"]` should keep this a no-op, but if a
+    # local hand-edit ever lands without tidying, this catches it.
+    - go mod tidy
+
+builds:
+  - id: balenamcp
+    binary: balenamcp
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # `-s -w` strips debug + symbol tables (cuts binary in half).
+      # `-X ...server.Version=...` injects the release tag so the MCP
+      # `serverInfo` block reports e.g. `v0.1.0` instead of the default
+      # `dev` from the var declaration.
+      - -s -w
+      - -X github.com/schubydoo/balenamcp/server.Version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Matches our previous matrix — we never shipped windows/arm64 and
+      # nobody's asked. Drop the ignore if/when a user requests it.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: archives
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Goreleaser convention: <name>_<version>_<os>_<arch>. Different from the
+    # old release.yml's `balenamcp-<os>-<arch>` naming, but the new shape is
+    # what `go install`-style tooling, Homebrew formulas, and shasum tooling
+    # expect.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    # Include the legal/security paperwork in every archive so a downloader
+    # can read it without re-visiting GitHub.
+    files:
+      - LICENSE
+      - README.md
+      - SECURITY.md
+
+checksum:
+  # Single checksums.txt for the whole release. Cosign signs this file (see
+  # `signs:` below); a verifier then trusts every artifact transitively
+  # through its hash in the signed file.
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  # Per-archive CycloneDX-JSON SBOMs via syft. Generated for the archive
+  # artifacts (which include the compiled binary + LICENSE etc) so the SBOM
+  # captures both Go module deps and the file inventory.
+  - id: archive-sboms
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.cdx.json"
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json=$document"
+
+signs:
+  # Keyless cosign signing via Sigstore. The GitHub Actions runner provides
+  # an OIDC token to the Sigstore Fulcio CA, which issues a short-lived
+  # certificate. Cosign signs the artifact and emits a `.sigstore.json`
+  # bundle that contains the signature, certificate, and transparency-log
+  # entry — verifiers don't need anything else.
+  #
+  # We sign:
+  #   - checksums.txt (transitively secures every artifact via its hash)
+  #   - Each archive SBOM (so the bill of materials can't be tampered with)
+  #
+  # Per-archive signatures would be redundant given the signed checksums
+  # file, but they make single-binary verification slightly friendlier; if
+  # we add them later, set `artifacts: archive` on a third block.
+  - id: cosign-checksums
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    artifacts: checksum
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    output: true
+
+  - id: cosign-sboms
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    artifacts: sbom
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    output: true
+
+release:
+  github:
+    owner: schubydoo
+    name: balenamcp
+  # `append` (not `replace`): release-please will have already created the
+  # GitHub Release for this tag with the CHANGELOG section as the body.
+  # Goreleaser uploads artifacts to that existing release without touching
+  # the notes. If the release doesn't exist (e.g. manual `git tag && git
+  # push`), goreleaser creates it from scratch.
+  mode: append
+  draft: false
+  prerelease: false
