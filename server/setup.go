@@ -221,13 +221,22 @@ func getIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.CallTo
 	return v, nil
 }
 
+// Version is the application version reported in the MCP `serverInfo` block
+// and visible to clients on initialize. Overridable at build time via:
+//
+//	go build -ldflags='-X github.com/schubydoo/balenamcp/server.Version=v1.2.3' .
+//
+// Goreleaser populates this with the release tag on tagged builds; unset
+// builds (local `go build`, `go install` from main) report "dev".
+var Version = "dev"
+
 // SetupServer wires up every tool and returns the MCP server ready to serve over stdio.
 func SetupServer() *server.MCPServer {
 	loadConfigFromEnv()
 
 	srv := server.NewMCPServer(
 		"BalenaMCP",
-		"0.1.0",
+		Version,
 		server.WithLogging(),
 		server.WithRecovery(),
 		server.WithToolCapabilities(true),
