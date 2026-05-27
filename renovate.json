@@ -64,6 +64,28 @@
       "matchManagers": ["gomod"],
       "matchDepTypes": ["indirect"],
       "enabled": true
+    },
+    {
+      "description": "Gremlins CI-installed tool — keep on the github-actions cadence + labels since the version lives in workflow files.",
+      "matchPackageNames": ["go-gremlins/gremlins"],
+      "groupName": "github-actions (minor + patch)",
+      "commitMessagePrefix": "chore(ci):",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "ci",
+      "addLabels": ["github-actions", "ci"]
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Track GREMLINS_VERSION env var in the mutation testing workflows. gremlins is installed at CI runtime via `go install`, so it's neither in go.mod (gomod manager skips it) nor a GitHub Action uses: line (github-actions manager skips it). The regex below picks the literal `GREMLINS_VERSION: vX.Y.Z` line and Renovate cross-references it against go-gremlins/gremlins's GitHub releases.",
+      "customType": "regex",
+      "fileMatch": ["^\\.github/workflows/mutation(-pr)?\\.yml$"],
+      "matchStrings": [
+        "GREMLINS_VERSION:\\s+(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "go-gremlins/gremlins",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
     }
   ]
 }
