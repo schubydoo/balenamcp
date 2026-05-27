@@ -12,6 +12,7 @@
   "prConcurrentLimit": 10,
   "labels": ["dependencies"],
   "rebaseWhen": "behind-base-branch",
+  "postUpdateOptions": ["gomodTidy"],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 7am on Monday"]
