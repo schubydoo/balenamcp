@@ -10,11 +10,80 @@ brought up to date with the current balena CLI and the current `mark3labs/mcp-go
 
 ## Prerequisites
 
-- Go 1.23+
 - [`balena` CLI](https://github.com/balena-io/balena-cli) on `PATH`
 - An MCP client (e.g. Claude Desktop)
+- Go 1.23+ (only if you're building from source — pre-built binaries don't require it)
 
-## Build
+## Install
+
+Three options, pick whichever fits.
+
+### 1. Pre-built binary from GitHub Releases (recommended)
+
+Grab the archive for your OS/arch from
+[Releases](https://github.com/schubydoo/balenamcp/releases/latest):
+
+| OS | Arch | Archive |
+|---|---|---|
+| Linux | x86_64 | `balenamcp_<version>_Linux_x86_64.tar.gz` |
+| Linux | arm64 | `balenamcp_<version>_Linux_arm64.tar.gz` |
+| macOS | x86_64 (Intel) | `balenamcp_<version>_Darwin_x86_64.tar.gz` |
+| macOS | arm64 (Apple Silicon) | `balenamcp_<version>_Darwin_arm64.tar.gz` |
+| Windows | x86_64 | `balenamcp_<version>_Windows_x86_64.zip` |
+
+Each release also publishes:
+
+- **`checksums.txt`** — SHA-256 of every artifact
+- **`checksums.txt.sigstore.json`** — cosign signature over `checksums.txt`
+- **`<archive>.sbom.cdx.json`** — CycloneDX Software Bill of Materials per archive
+- **`<archive>.sbom.cdx.json.sigstore.json`** — cosign signature over each SBOM
+
+#### Verifying a download (recommended)
+
+The release is signed with [cosign](https://docs.sigstore.dev/cosign/installation/)
+using Sigstore keyless signing — no public-key juggling needed. Install
+cosign, then:
+
+```sh
+# 1. Verify the signature on checksums.txt
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp \
+    'https://github.com/schubydoo/balenamcp/.github/workflows/release.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+
+# 2. Verify your archive against the (now-trusted) checksums file
+sha256sum --check checksums.txt --ignore-missing
+```
+
+If both commands succeed, you've cryptographically verified that the
+archive was built by **this** repo's release workflow (not a typo-squatter,
+not tampered with in transit).
+
+#### Extract and install
+
+```sh
+tar -xzf balenamcp_<version>_Linux_x86_64.tar.gz
+sudo install balenamcp /usr/local/bin/
+balenamcp --help   # or just `balenamcp` to start serving over stdio
+```
+
+### 2. `go install` (Go developers)
+
+```sh
+go install github.com/schubydoo/balenamcp@latest
+```
+
+Resolves to the highest semver tag, builds locally, and drops the binary
+in `$GOBIN` (default `$GOPATH/bin` or `~/go/bin`). For docs and package
+info: <https://pkg.go.dev/github.com/schubydoo/balenamcp>.
+
+`@latest` follows the most recent release; pin a specific version with
+`go install github.com/schubydoo/balenamcp@v0.1.0` if you'd rather not
+auto-update.
+
+### 3. Build from source
 
 ```sh
 git clone https://github.com/schubydoo/balenamcp.git
@@ -30,6 +99,15 @@ GOOS=linux   GOARCH=amd64 go build -o bin/balenamcp-linux-amd64
 GOOS=windows GOARCH=amd64 go build -o bin/balenamcp-windows-amd64.exe
 GOOS=darwin  GOARCH=arm64 go build -o bin/balenamcp-darwin-arm64
 ```
+
+For a versioned source build (matches release builds):
+
+```sh
+go build -ldflags='-s -w -X github.com/schubydoo/balenamcp/server.Version=v0.1.0' \
+  -trimpath -o bin/balenamcp .
+```
+
+Without the `-X` ldflag, the server reports `dev` as its version.
 
 A `-dry-run` flag is available — the server prints the balena command it
 *would* run instead of executing it. Useful for testing/debugging.
@@ -159,6 +237,33 @@ Layout:
 - `main_test.go` — in-process MCP client driving every tool in dry-run mode
 - `livetest_test.go` — build-tagged (`integration`) end-to-end sweep against
   real balenaCloud, opt-in via env vars
+
+### Release flow
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please)
++ [goreleaser](https://goreleaser.com):
+
+1. Commits to `main` use [Conventional Commits](https://www.conventionalcommits.org/)
+   (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, etc.). The PR title gate
+   enforces this on every PR.
+2. **release-please** watches `main` and opens a "chore(main): release vX.Y.Z"
+   PR that bumps `.release-please-manifest.json` and rewrites `CHANGELOG.md`
+   based on the conventional-commit history since the last tag.
+3. Merging that PR pushes a `vX.Y.Z` tag.
+4. **goreleaser** (in `release.yml`) fires on the tag push: cross-compiles
+   for 5 targets, generates CycloneDX SBOMs via syft, signs `checksums.txt`
+   and SBOMs with cosign keyless, uploads everything to the GitHub Release
+   release-please already created.
+
+End-to-end, a release looks like:
+
+```
+$ git commit -m "feat: add foo tool"     # conventional commit
+$ git push                                # to a branch + PR + merge
+                                          # ... release-please opens release PR ...
+$ # merge the release PR ...
+$ # ... goreleaser publishes binaries + SBOMs + signatures to GH Releases
+```
 
 ## Troubleshooting
 
