@@ -75,18 +75,27 @@ jobs:
         # there were no mutants. Either way we still want to publish the
         # summary; the script downstream decides whether to mark this run a
         # failure.
+        #
+        # BASE_REF goes through env to keep zizmor's template-injection
+        # audit happy — embedding `${{ github.base_ref }}` directly in the
+        # shell would let a (theoretical) malicious PR title or branch
+        # name escape into the command.
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -uo pipefail
           gremlins unleash \
             --integration \
             --coverpkg=./... \
             --workers=2 \
-            --diff "origin/${{ github.base_ref }}" \
+            --diff "origin/${BASE_REF}" \
             --output=gremlins.json \
             --threshold-efficacy=0 || true
 
       - name: Publish PR-diff mutation summary
         if: always()
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
           if [ ! -f gremlins.json ]; then
@@ -98,7 +107,7 @@ jobs:
 
           runnable=$(jq -r '.killed + .lived + .timedOut' gremlins.json)
 
-          echo "## Mutation testing (PR diff vs \`${{ github.base_ref }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Mutation testing (PR diff vs \`${BASE_REF}\`)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$runnable" = "0" ]; then

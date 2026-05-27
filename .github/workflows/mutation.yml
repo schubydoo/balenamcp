@@ -77,6 +77,13 @@ jobs:
         # --threshold-efficacy gates the exit code on the caller-supplied
         # percent — scheduled runs stay report-only at 0; explicit
         # dispatches can pin a quality bar.
+        #
+        # The workflow_dispatch input goes through `env:` rather than
+        # inlined into the shell — keeps zizmor's template-injection
+        # audit happy. An attacker who could schedule a dispatch could
+        # otherwise inject arbitrary shell via this field.
+        env:
+          THRESHOLD_EFFICACY: ${{ inputs.fail-under-efficacy || '0' }}
         run: |
           set -euo pipefail
           # NOTE: the positional argument is a filesystem DIRECTORY, not a Go
@@ -90,7 +97,7 @@ jobs:
             --coverpkg=./... \
             --workers=2 \
             --output=gremlins.json \
-            --threshold-efficacy=${{ inputs.fail-under-efficacy || '0' }}
+            --threshold-efficacy="${THRESHOLD_EFFICACY}"
 
       - name: Summarize results
         if: always()
