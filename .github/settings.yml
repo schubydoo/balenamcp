@@ -28,11 +28,21 @@ repository:
   allow_auto_merge: true
   delete_branch_on_merge: true
   allow_update_branch: true
-  # Squash button defaults: use PR title as subject, PR body as message. Both
-  # are the GitHub defaults for new repos but explicit here so they survive
-  # any future default flip.
-  squash_merge_commit_title: PR_TITLE
-  squash_merge_commit_message: PR_BODY
+  # Squash button defaults. Both override the GitHub defaults of
+  # PR_TITLE / PR_BODY because:
+  #
+  #   - squash_merge_commit_title: COMMIT_OR_PR_TITLE
+  #     Uses the single commit's subject when a PR has only one commit,
+  #     falls back to the PR title otherwise. Avoids the "(#NN)" suffix
+  #     duplication that PR_TITLE produces on single-commit PRs.
+  #
+  #   - squash_merge_commit_message: COMMIT_MESSAGES
+  #     Concatenates the branch's commit messages into the squash body.
+  #     Preserves the hand-crafted commit bodies (rationale +
+  #     Co-Authored-By trailers) instead of replacing them with the PR
+  #     description, which on Renovate PRs is a wall of changelog noise.
+  squash_merge_commit_title: COMMIT_OR_PR_TITLE
+  squash_merge_commit_message: COMMIT_MESSAGES
 
 # Labels — Dependabot / Renovate apply these automatically once they exist.
 # Without this block GitHub auto-creates labels with arbitrary colors on
