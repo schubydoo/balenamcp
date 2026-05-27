@@ -8,7 +8,14 @@ repository:
   name: balenamcp
   description: MCP server wrapping the balena CLI — fleets, devices, releases, tags, env vars
   homepage: https://github.com/schubydoo/balenamcp
-  topics: mcp, model-context-protocol, balena, balena-cli, mcp-server, golang, go, claude, claude-desktop
+  # Topics: GitHub slugs disallow spaces. Probot passes the topics string
+  # through to the API, and any topic with a leading space (e.g. ' balena'
+  # after a comma+space) gets silently dropped — observed empirically:
+  # the first push of this file with `topics: a, b, c` left the repo with
+  # zero topics applied. Use a folded scalar + bare commas so the parsed
+  # value is exactly `a,b,c` with no internal spaces.
+  topics: >-
+    mcp,model-context-protocol,balena,balena-cli,mcp-server,golang,go,claude,claude-desktop
 
   # Discussions/wiki/projects off — issues stay on for bug reports.
   has_issues: true
@@ -69,6 +76,18 @@ labels:
 
 # Branch protection — gates merges to main on the CI aggregator job.
 # Closes the "branch protection not yet configured" follow-up.
+#
+# Probot Settings App gotchas observed on the first apply attempt (and
+# documented at repository-settings/app#923 and friends):
+#
+#  - `enforce_admins: false` is silently rejected; the entire protection
+#    block then fails to apply. Use `null` (or omit the key entirely).
+#    That's why the first push of this file left the repo with no
+#    protection at all.
+#  - `restrictions: false` has the same problem — use `null`.
+#  - `required_pull_request_reviews: null` works, but some App releases
+#    have flaked on it; an explicit object with `required_approving_review_count: 0`
+#    is safer for solo workflows.
 branches:
   - name: main
     protection:
@@ -80,10 +99,13 @@ branches:
         contexts:
           - ci required checks passed
 
-      # Solo committer — requiring PR review of self is annoying. Drop to
-      # null so direct pushes to main still work for housekeeping, but PRs
-      # still gate on CI.
-      required_pull_request_reviews: null
+      # Solo committer — no review required. Spelled out as a full object
+      # (rather than `null`) so the Probot App can't trip over the null
+      # variant. `required_approving_review_count: 0` = effectively off.
+      required_pull_request_reviews:
+        required_approving_review_count: 0
+        dismiss_stale_reviews: false
+        require_code_owner_reviews: false
 
       # Linear history pairs with squash-only merging.
       required_linear_history: true
@@ -97,9 +119,8 @@ branches:
       required_conversation_resolution: false
       required_signatures: false
 
-      # Admin can still merge if CI is wedged; bypass is intentional on a
-      # personal repo. Flip to true if this ever becomes a shared repo.
-      enforce_admins: false
+      # MUST be `null` (not `false`) — see top-of-block note.
+      enforce_admins: null
 
-      # No restrictions on who can push — solo repo.
+      # MUST be `null` (not `false`) — same App parsing bug.
       restrictions: null
