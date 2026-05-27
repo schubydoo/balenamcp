@@ -100,13 +100,26 @@ branches:
         # The check must also have run on this repo at least once before
         # it can be marked required.
         #
-        # `ci required checks passed` is ci.yml's aggregator (needs:
-        # lint, test ×3 OS, mcp-smoke ×3 OS, coverage). Add a new ci.yml
-        # job by appending to that `needs:` list — do NOT add the
-        # individual check name here.
+        # Aggregator pattern (mirrors dump1090-exporter): expand each
+        # aggregator's `needs:` list to add new checks rather than adding
+        # individual check names here. That way Probot doesn't have to
+        # be re-applied every time we add a CI job.
+        #
+        #  - `ci required checks passed` (ci.yml) — needs: lint, test ×3,
+        #    mcp-smoke ×3, coverage
+        #  - `security required checks passed` (security.yml) — needs:
+        #    changes, codeql, gitleaks, trivy-fs, zizmor, dependency-review
+        #  - `conventional PR title` (pr-title.yml) — gates the squash
+        #    commit subject, which release-please parses for version bumps
+        #
+        # `OSSF Scorecard` is intentionally NOT required: scorecard.yml
+        # only triggers on push + schedule + branch_protection_rule, so
+        # requiring it would leave every PR perpetually pending.
         strict: true
         contexts:
           - "ci required checks passed"
+          - "security required checks passed"
+          - "conventional PR title"
       # `null` (not `false`) — the Probot Settings App rejects `false`
       # here silently. See repository-settings/app#923.
       enforce_admins: null
