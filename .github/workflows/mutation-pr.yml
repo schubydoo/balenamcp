@@ -1,0 +1,140 @@
+name: Mutation Testing (PR diff)
+
+# PR-scoped mutation testing — runs gremlins in --diff mode against the PR's
+# base ref, so it only mutates lines the PR actually changed. Cheap enough to
+# run on every PR (typical PR diff = handful of mutants, finishes in <2min),
+# unlike the full-tree weekly run in mutation.yml.
+#
+# Intentionally NOT a required check on `ci required checks passed`. A 3-line
+# PR can easily produce 0 mutants or 1 mutant — gating on efficacy at that
+# scale produces false positives. The job posts a job summary so a reviewer
+# can see the result without it blocking merge.
+#
+# Gremlins --diff requires full git history (fetch-depth: 0). It compares the
+# current state against `origin/<base>` and only generates mutants whose AST
+# spans intersect changed line ranges. If the PR touches no .go files, the
+# step summary says "no mutants to report" and the job exits clean.
+
+on:
+  pull_request:
+    paths:
+      # Skip workflow re-runs for non-code changes (markdown, dependabot/renovate
+      # config drift, etc). The full weekly run still covers those indirectly
+      # by re-running over the full tree.
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - .github/workflows/mutation-pr.yml
+
+permissions:
+  contents: read
+  pull-requests: write # for posting the summary comment
+
+concurrency:
+  group: mutation-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  mutation-diff:
+    name: gremlins (PR diff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GREMLINS_VERSION: v0.6.0
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # --diff walks the git log to compute changed line ranges; the
+          # default fetch-depth=1 leaves it with no history to compare
+          # against. fetch-depth: 0 is the documented requirement.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@${GREMLINS_VERSION}
+
+      - name: Verify gremlins on PATH
+        run: gremlins --version
+
+      - name: Run mutation testing on PR diff
+        # See mutation.yml for the long-form notes on --integration and
+        # --coverpkg. The same flags are mandatory here.
+        #
+        # --diff takes a Git reference. `origin/${{ github.base_ref }}` is the
+        # tip of the branch this PR targets (typically `origin/main`).
+        # Gremlins generates mutants only on lines the PR changed relative to
+        # that ref.
+        #
+        # `|| true` on the gremlins call: a non-zero exit from gremlins here
+        # means the efficacy threshold (0 = report-only) was not met, OR
+        # there were no mutants. Either way we still want to publish the
+        # summary; the script downstream decides whether to mark this run a
+        # failure.
+        run: |
+          set -uo pipefail
+          gremlins unleash \
+            --integration \
+            --coverpkg=./... \
+            --workers=2 \
+            --diff "origin/${{ github.base_ref }}" \
+            --output=gremlins.json \
+            --threshold-efficacy=0 || true
+
+      - name: Publish PR-diff mutation summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f gremlins.json ]; then
+            echo "## Mutation testing (PR diff)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No gremlins.json produced — likely no Go source lines changed in this PR._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          runnable=$(jq -r '.killed + .lived + .timedOut' gremlins.json)
+
+          echo "## Mutation testing (PR diff vs \`${{ github.base_ref }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$runnable" = "0" ]; then
+            echo "_0 mutants generated on changed lines — nothing to assert against._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          jq -r '
+            "**Test efficacy:** \(.testEfficacy)%",
+            "**Mutator coverage:** \(.mutationsCoverage)%",
+            "",
+            "| Status | Count |",
+            "|---|---|",
+            "| KILLED | \(.killed)  |",
+            "| LIVED | \(.lived)  |",
+            "| NOT COVERED | \(.notCovered)  |",
+            "| TIMED OUT | \(.timedOut)  |",
+            "| NOT VIABLE | \(.notViable)  |",
+            "| SKIPPED | \(.skipped)  |"
+          ' gremlins.json >> "$GITHUB_STEP_SUMMARY"
+
+          lived=$(jq -r '.lived' gremlins.json)
+          if [ "$lived" != "0" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Lived mutants on changed lines" >> "$GITHUB_STEP_SUMMARY"
+            echo "_These are surviving mutants in code this PR introduced or modified. Worth a second look at the corresponding test assertions._" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.files[]?.mutants[]? | select(.status == "LIVED") | "- `\(.type)` at \(.fileName):\(.lineNumber):\(.columnNumber)"' \
+              gremlins.json >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      - name: Upload PR-diff mutation report
+        if: always() && hashFiles('gremlins.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gremlins-pr-diff-report
+          path: gremlins.json
+          retention-days: 14
+          if-no-files-found: ignore
