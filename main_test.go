@@ -229,6 +229,11 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "fleet-pin",
 		map[string]any{"fleet": "myorg/myfleet", "release": "abc123"},
 		"balena fleet pin myorg/myfleet abc123")
+	// device-track-fleet is the inverse of device-pin — exercises the unpin
+	// path the live sweep flagged as missing.
+	expect(t, c, ctx, "device-track-fleet",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device track-fleet 7cf02a6")
 
 	// release finalize
 	expect(t, c, ctx, "release-finalize",
@@ -291,6 +296,7 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"device-shutdown", map[string]any{"uuid": "7cf02a6"}},
 		{"device-purge", map[string]any{"uuid": "7cf02a6"}},
 		{"device-pin", map[string]any{"uuid": "7cf02a6"}},
+		{"device-track-fleet", map[string]any{"uuid": "7cf02a6"}},
 		{"fleet-pin", map[string]any{"fleet": "myorg/myfleet"}},
 		{"release-finalize", map[string]any{"id": "123"}},
 		{"tag-set", map[string]any{"key": "owner", "fleet": "my-fleet"}},

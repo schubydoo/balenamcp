@@ -119,6 +119,26 @@ func runCmd(ctx context.Context, args []string) (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultText(out), nil
 }
 
+// runCmdAllowingBenignError runs the command like runCmd, but if the CLI
+// returns a non-zero exit whose stdout contains `benignMarker`, the call is
+// treated as a successful empty-state result rather than an error.
+//
+// Motivation: `balena tag list` exits 1 with the stdout "No tags found" when a
+// fleet/device/release simply has no tags. Empty-list is not an error condition
+// from an agent's point of view, but the CLI's exit code says otherwise. We
+// surface the benign case as success while still propagating actual failures
+// (auth, network, malformed identifiers) unchanged.
+func runCmdAllowingBenignError(ctx context.Context, args []string, benignMarker string) (*mcp.CallToolResult, error) {
+	out, err := executeCommand(ctx, args)
+	if err == nil {
+		return mcp.NewToolResultText(out), nil
+	}
+	if strings.Contains(err.Error(), benignMarker) {
+		return mcp.NewToolResultText(benignMarker), nil
+	}
+	return mcp.NewToolResultError(err.Error()), nil
+}
+
 // appendBoolFlag appends `cliFlag` to flags if the named bool arg is true.
 func appendBoolFlag(flags []string, r mcp.CallToolRequest, name, cliFlag string) []string {
 	if r.GetBool(name, false) {
@@ -482,7 +502,9 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		args := append([]string{"tag", "list"}, flag...)
-		return runCmd(ctx, args)
+		// balena CLI exits 1 with "No tags found" for an empty tag set on
+		// the target. That's an empty-state response, not a failure — remap.
+		return runCmdAllowingBenignError(ctx, args, "No tags found")
 	})
 
 	// env-list -------------------------------------------------------------
@@ -663,6 +685,27 @@ func registerMutatingTools(srv *server.MCPServer) {
 			args = append(args, rel)
 		}
 		return runCmd(ctx, args)
+	})
+
+	// device-track-fleet ---------------------------------------------------
+	// Inverse of device-pin: drops the device-level pin so it resumes
+	// tracking whatever the fleet is pinned to. Without this, our pin
+	// lifecycle is one-way through the server — once device-pin runs, the
+	// only way back is re-pinning to another release. Surfaced as a real
+	// gap during the live validation sweep.
+	srv.AddTool(mcp.NewTool("device-track-fleet",
+		mcp.WithDescription("Drop a device's pinned release and resume tracking the fleet's pinned release. Inverse of device-pin."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to unpin.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "track-fleet", uuid})
 	})
 
 	// fleet-pin ------------------------------------------------------------

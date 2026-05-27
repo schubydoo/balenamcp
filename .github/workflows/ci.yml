@@ -123,8 +123,8 @@ jobs:
             release-asset-list tag-list env-list os-versions
             organization-list ssh-key-list api-key-list
             device-reboot device-restart device-shutdown device-purge
-            device-pin fleet-pin release-finalize tag-set tag-rm
-            env-set env-rm
+            device-pin device-track-fleet fleet-pin release-finalize
+            tag-set tag-rm env-set env-rm
           )
           missing=()
           for t in "${required[@]}"; do
