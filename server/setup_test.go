@@ -401,6 +401,125 @@ func TestRunCmd_ErrorPath(t *testing.T) {
 	}
 }
 
+// ----- guardDestructive --------------------------------------------------
+
+// TestGuardDestructive exercises both layers in sequence: the
+// BALENAMCP_REQUIRE_CONFIRM gate AND the identifier-resolution + flag-shape
+// guard. Each subtest pins one variable while varying the other so failures
+// localize cleanly.
+func TestGuardDestructive(t *testing.T) {
+	orig := Config.RequireConfirm
+	defer func() { Config.RequireConfirm = orig }()
+
+	t.Run("gate_off_identifier_present", func(t *testing.T) {
+		Config.RequireConfirm = false
+		id, errRes := guardDestructive(req(map[string]any{"uuid": "abc123"}), "uuid", "device UUID")
+		if errRes != nil {
+			t.Fatalf("unexpected errRes: %+v", errRes)
+		}
+		if id != "abc123" {
+			t.Fatalf("want id=abc123 got %q", id)
+		}
+	})
+
+	t.Run("gate_on_no_confirm", func(t *testing.T) {
+		Config.RequireConfirm = true
+		id, errRes := guardDestructive(req(map[string]any{"uuid": "abc123"}), "uuid", "device UUID")
+		if errRes == nil {
+			t.Fatalf("expected errRes when confirm is required but missing")
+		}
+		if id != "" {
+			t.Fatalf("want empty id on gate failure, got %q", id)
+		}
+	})
+
+	t.Run("gate_on_with_confirm", func(t *testing.T) {
+		Config.RequireConfirm = true
+		id, errRes := guardDestructive(req(map[string]any{"uuid": "abc123", "confirm": true}), "uuid", "device UUID")
+		if errRes != nil {
+			t.Fatalf("unexpected errRes: %+v", errRes)
+		}
+		if id != "abc123" {
+			t.Fatalf("want id=abc123 got %q", id)
+		}
+	})
+
+	t.Run("identifier_missing", func(t *testing.T) {
+		Config.RequireConfirm = false
+		id, errRes := guardDestructive(req(map[string]any{}), "uuid", "device UUID")
+		if errRes == nil {
+			t.Fatalf("expected errRes when required identifier is missing")
+		}
+		if id != "" {
+			t.Fatalf("want empty id on identifier failure, got %q", id)
+		}
+	})
+
+	t.Run("identifier_flag_shaped_rejected", func(t *testing.T) {
+		Config.RequireConfirm = false
+		id, errRes := guardDestructive(req(map[string]any{"uuid": "--help"}), "uuid", "device UUID")
+		if errRes == nil {
+			t.Fatalf("expected errRes when identifier starts with '-'")
+		}
+		if id != "" {
+			t.Fatalf("want empty id on flag-shape rejection, got %q", id)
+		}
+	})
+}
+
+// ----- env-var loaders ---------------------------------------------------
+
+// TestLoadExecTimeoutFromEnv tests the extracted helper directly (the same
+// shape that TestLoadConfigFromEnv covers via the outer dispatcher, but
+// targets the helper so gremlins can find mutants against it).
+func TestLoadExecTimeoutFromEnv(t *testing.T) {
+	cases := []struct {
+		envVal string
+		want   time.Duration
+	}{
+		{"", defaultExecTimeout},
+		{"5", 5 * time.Second},
+		{"120", 120 * time.Second},
+		{"nonsense", defaultExecTimeout},
+		{"-1", defaultExecTimeout},
+		{"0", defaultExecTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.envVal, func(t *testing.T) {
+			t.Setenv("BALENAMCP_EXEC_TIMEOUT", tc.envVal)
+			got := loadExecTimeoutFromEnv()
+			if got != tc.want {
+				t.Errorf("env=%q want %s got %s", tc.envVal, tc.want, got)
+			}
+		})
+	}
+}
+
+// TestLoadRequireConfirmFromEnv mirrors the above for the bool helper.
+func TestLoadRequireConfirmFromEnv(t *testing.T) {
+	cases := []struct {
+		envVal string
+		want   bool
+	}{
+		{"", false},
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"0", false},
+		{"false", false},
+		{"nonsense", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.envVal, func(t *testing.T) {
+			t.Setenv("BALENAMCP_REQUIRE_CONFIRM", tc.envVal)
+			got := loadRequireConfirmFromEnv()
+			if got != tc.want {
+				t.Errorf("env=%q want %v got %v", tc.envVal, tc.want, got)
+			}
+		})
+	}
+}
+
 // ----- helpers -----------------------------------------------------------
 
 func equalSlice(a, b []string) bool {

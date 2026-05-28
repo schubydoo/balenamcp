@@ -44,28 +44,42 @@ var Config = ServerConfig{}
 // loadConfigFromEnv reads server tuning from env vars. Called once from
 // SetupServer; safe to re-invoke from tests when env state changes.
 func loadConfigFromEnv() {
-	Config.ExecTimeout = defaultExecTimeout
-	if v := os.Getenv("BALENAMCP_EXEC_TIMEOUT"); v != "" {
-		secs, err := strconv.Atoi(v)
-		if err == nil && secs > 0 {
-			Config.ExecTimeout = time.Duration(secs) * time.Second
-		} else {
-			fmt.Fprintf(os.Stderr,
-				"BALENAMCP_EXEC_TIMEOUT=%q is not a positive integer; using default %s\n",
-				v, defaultExecTimeout)
-		}
-	}
+	Config.ExecTimeout = loadExecTimeoutFromEnv()
+	Config.RequireConfirm = loadRequireConfirmFromEnv()
+}
 
-	Config.RequireConfirm = false
-	if v := os.Getenv("BALENAMCP_REQUIRE_CONFIRM"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"BALENAMCP_REQUIRE_CONFIRM=%q is not a boolean; defaulting to off\n", v)
-		} else {
-			Config.RequireConfirm = b
-		}
+// loadExecTimeoutFromEnv parses BALENAMCP_EXEC_TIMEOUT (seconds). Invalid or
+// non-positive values fall back to defaultExecTimeout with a stderr warning.
+func loadExecTimeoutFromEnv() time.Duration {
+	v := os.Getenv("BALENAMCP_EXEC_TIMEOUT")
+	if v == "" {
+		return defaultExecTimeout
 	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs <= 0 {
+		fmt.Fprintf(os.Stderr,
+			"BALENAMCP_EXEC_TIMEOUT=%q is not a positive integer; using default %s\n",
+			v, defaultExecTimeout)
+		return defaultExecTimeout
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// loadRequireConfirmFromEnv parses BALENAMCP_REQUIRE_CONFIRM as a Go bool
+// literal (true/false/1/0/T/F/…). Unset or unparseable values default to
+// false; an unparseable value logs a stderr warning.
+func loadRequireConfirmFromEnv() bool {
+	v := os.Getenv("BALENAMCP_REQUIRE_CONFIRM")
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"BALENAMCP_REQUIRE_CONFIRM=%q is not a boolean; defaulting to off\n", v)
+		return false
+	}
+	return b
 }
 
 // executeCommand shells out to the balena CLI (or pretends to, in dry-run
@@ -285,6 +299,22 @@ func destructive(t *mcp.Tool) {
 		mcp.Description("Set to true to acknowledge the destructive operation. "+
 			"Required only when the server is started with BALENAMCP_REQUIRE_CONFIRM=1; "+
 			"ignored otherwise."))(t)
+}
+
+// guardDestructive runs the standard destructive-tool preamble in one call:
+// the BALENAMCP_REQUIRE_CONFIRM gate, then a flag-shape-guarded lookup of
+// the named identifier argument. On success returns (id, nil); on either
+// guard failing returns ("", errResult) for the caller to propagate.
+//
+// Use only for tools whose canonical input is a single identifier (device
+// UUID, fleet slug, release ID). Tools with multi-identifier arguments
+// (tag-set/tag-rm, env-set/env-rm) still call requireConfirm + pickResource
+// directly because their identifier-resolution shape doesn't match.
+func guardDestructive(r mcp.CallToolRequest, idKey, what string) (string, *mcp.CallToolResult) {
+	if errRes := requireConfirm(r); errRes != nil {
+		return "", errRes
+	}
+	return requireIdentifier(r, idKey, what)
 }
 
 // registerReadOnlyTools wires every read-only tool onto srv. Kept as a thin
@@ -644,10 +674,7 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to reboot.")),
 		mcp.WithBoolean("force", mcp.Description("Force reboot even if updates are in progress.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -664,10 +691,7 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
 		mcp.WithString("service", mcp.Description("Service name(s) to restart, comma-separated. Omit to restart all services.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -689,10 +713,7 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to shut down.")),
 		mcp.WithBoolean("force", mcp.Description("Force shutdown even if updates are in progress.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -708,10 +729,7 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(),
 			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -731,10 +749,7 @@ func registerMutatingPins(srv *server.MCPServer) {
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID.")),
 		mcp.WithString("release", mcp.Description("Release commit to pin the device to. Omit to query the current pin.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -760,10 +775,7 @@ func registerMutatingPins(srv *server.MCPServer) {
 		destructive,
 		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID to unpin.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -777,10 +789,7 @@ func registerMutatingPins(srv *server.MCPServer) {
 		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet slug (org/fleet).")),
 		mcp.WithString("release", mcp.Description("Release commit to pin the fleet to. Omit to query the current pin.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		fleet, errRes := requireIdentifier(r, "fleet", "fleet slug")
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -802,10 +811,7 @@ func registerMutatingPins(srv *server.MCPServer) {
 		mcp.WithString("id", mcp.Required(),
 			mcp.Description("Release commit or numeric release ID to finalize.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if errRes := requireConfirm(r); errRes != nil {
-			return errRes, nil
-		}
-		id, errRes := requireIdentifier(r, "id", "release commit or ID")
+		id, errRes := guardDestructive(r, "id", "release commit or ID")
 		if errRes != nil {
 			return errRes, nil
 		}
