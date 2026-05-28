@@ -1,0 +1,52 @@
+name: Release Please
+
+# Release Please reads Conventional Commits on `main` and opens a "release PR"
+# that bumps `.release-please-manifest.json` and updates `CHANGELOG.md`.
+# Merging that PR tags the commit (e.g. `v0.1.0`), which fires release.yml
+# (`on: push: tags`).
+#
+# For Go projects (`release-type: go`) there is intentionally no source-level
+# version constant to bump — the binary version is injected at build time via
+# `-ldflags="-X main.version=..."` (planned for the goreleaser PR) and exposed
+# via runtime/debug.BuildInfo otherwise.
+#
+# Mirrors schubydoo/dump1090-exporter's release-please.yml.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # A user PAT (not GITHUB_TOKEN) so the release tag is attributed to
+          # a real identity and therefore *triggers* the release build
+          # workflow. Tags pushed by GITHUB_TOKEN do not start further
+          # workflow runs (GitHub's anti-recursion rule), which would leave
+          # us with a tag but no published binaries.
+          #
+          # Setup steps:
+          #   1. Open https://github.com/settings/personal-access-tokens/new
+          #   2. Create a fine-grained PAT scoped to the
+          #      schubydoo/balenamcp repository
+          #   3. Grant Contents (Read and write) plus
+          #      Pull requests (Read and write)
+          #   4. Save the PAT as repository secret RELEASE_PLEASE_TOKEN
+          #      (Settings -> Secrets and variables -> Actions -> New secret)
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
