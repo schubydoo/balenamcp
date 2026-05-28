@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/schubydoo/balenamcp/compare/v1.0.0...v1.0.1) (2026-05-28)
+
+
+### Miscellaneous
+
+* release v1.0.1 ([#18](https://github.com/schubydoo/balenamcp/issues/18)) ([f89d72d](https://github.com/schubydoo/balenamcp/commit/f89d72dc99f14dd6c12b047ede29d0927cc3c8c4))
+
 ## 1.0.0 (2026-05-28)
 
 
