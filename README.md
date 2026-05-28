@@ -1,5 +1,15 @@
 # BalenaMCP
 
+[![CI](https://github.com/schubydoo/balenamcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/schubydoo/balenamcp/actions/workflows/ci.yml)
+[![Security](https://github.com/schubydoo/balenamcp/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/schubydoo/balenamcp/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/schubydoo/balenamcp/badge)](https://scorecard.dev/viewer/?uri=github.com/schubydoo/balenamcp)
+[![Go Report Card](https://goreportcard.com/badge/github.com/schubydoo/balenamcp)](https://goreportcard.com/report/github.com/schubydoo/balenamcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/schubydoo/balenamcp.svg)](https://pkg.go.dev/github.com/schubydoo/balenamcp)
+[![Latest Release](https://img.shields.io/github/v/release/schubydoo/balenamcp?logo=github)](https://github.com/schubydoo/balenamcp/releases/latest)
+[![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen?logo=renovatebot)](https://docs.renovatebot.com)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://www.conventionalcommits.org/en/v1.0.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that wraps
 the [balena CLI](https://github.com/balena-io/balena-cli) so MCP-aware agents
 (Claude Code, Claude Desktop, Cursor, Continue, Cline, Goose, etc.) can list
