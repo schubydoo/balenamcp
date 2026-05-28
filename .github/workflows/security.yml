@@ -112,6 +112,11 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action is a JavaScript action pinned to node20 in its
+          # action.yml. GitHub is migrating JS actions to node24; this env
+          # opts in early so we don't get blindsided by a hard cutover.
+          # Safe no-op on runners that haven't shipped node24 yet.
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
   trivy-fs:
     name: trivy filesystem scan
@@ -163,6 +168,14 @@ jobs:
         # install it. Matches the dump1090-exporter pattern even though this
         # repo is Go — keeps zizmor invocation identical across projects.
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          # Disable uv's wheel cache. setup-uv tries to hash Python
+          # dependency files (requirements*.txt, pyproject.toml, uv.lock,
+          # …) to build a cache key; this repo is Go-only, so the glob
+          # never matches and the runner logs "The cache will never get
+          # invalidated." We install a single tool (zizmor) once per run
+          # and discard the environment, so caching has no upside here.
+          enable-cache: false
       - name: Install zizmor
         run: uv tool install zizmor
       - name: Run zizmor
