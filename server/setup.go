@@ -287,7 +287,21 @@ func destructive(t *mcp.Tool) {
 			"ignored otherwise."))(t)
 }
 
+// registerReadOnlyTools wires every read-only tool onto srv. Kept as a thin
+// dispatcher so each per-category helper stays under gocyclo's complexity
+// ceiling (15) and so an LLM-assisted reader can grep for the relevant
+// register* function instead of scrolling through 200+ lines of tool defs.
 func registerReadOnlyTools(srv *server.MCPServer) {
+	registerReadOnlyIdentity(srv)
+	registerReadOnlyFleets(srv)
+	registerReadOnlyDevices(srv)
+	registerReadOnlyReleases(srv)
+	registerReadOnlyTagsEnvs(srv)
+	registerReadOnlyAccount(srv)
+}
+
+// registerReadOnlyIdentity: version, whoami.
+func registerReadOnlyIdentity(srv *server.MCPServer) {
 
 	// version --------------------------------------------------------------
 	srv.AddTool(mcp.NewTool("version",
@@ -304,6 +318,10 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return runCmd(ctx, []string{"whoami"})
 	})
+}
+
+// registerReadOnlyFleets: fleet-list, fleet-info.
+func registerReadOnlyFleets(srv *server.MCPServer) {
 
 	// fleet-list -----------------------------------------------------------
 	srv.AddTool(mcp.NewTool("fleet-list",
@@ -332,6 +350,11 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "json", "--json")
 		return runCmd(ctx, args)
 	})
+}
+
+// registerReadOnlyDevices: device-list, device-info, device-logs,
+// device-type-list, os-versions.
+func registerReadOnlyDevices(srv *server.MCPServer) {
 
 	// device-list ----------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-list",
@@ -444,6 +467,10 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "include_draft", "--include-draft")
 		return runCmd(ctx, args)
 	})
+}
+
+// registerReadOnlyReleases: release-list, release-info, release-asset-list.
+func registerReadOnlyReleases(srv *server.MCPServer) {
 
 	// release-list ---------------------------------------------------------
 	srv.AddTool(mcp.NewTool("release-list",
@@ -497,6 +524,10 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "json", "--json")
 		return runCmd(ctx, args)
 	})
+}
+
+// registerReadOnlyTagsEnvs: tag-list, env-list.
+func registerReadOnlyTagsEnvs(srv *server.MCPServer) {
 
 	// tag-list -------------------------------------------------------------
 	srv.AddTool(mcp.NewTool("tag-list",
@@ -550,6 +581,10 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "json", "--json")
 		return runCmd(ctx, args)
 	})
+}
+
+// registerReadOnlyAccount: organization-list, ssh-key-list, api-key-list.
+func registerReadOnlyAccount(srv *server.MCPServer) {
 
 	// organization-list ----------------------------------------------------
 	srv.AddTool(mcp.NewTool("organization-list",
@@ -589,7 +624,19 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 
 // ----- mutating tools -----------------------------------------------------
 
+// registerMutatingTools wires every mutating tool onto srv. Thin dispatcher,
+// per registerReadOnlyTools above. Each helper stays well under gocyclo's
+// complexity ceiling.
 func registerMutatingTools(srv *server.MCPServer) {
+	registerMutatingDeviceLifecycle(srv)
+	registerMutatingPins(srv)
+	registerMutatingTags(srv)
+	registerMutatingEnvs(srv)
+}
+
+// registerMutatingDeviceLifecycle: device-reboot, device-restart,
+// device-shutdown, device-purge.
+func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 	// device-reboot --------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-reboot",
 		mcp.WithDescription("Remotely reboot a device. The device must be online."),
@@ -670,6 +717,12 @@ func registerMutatingTools(srv *server.MCPServer) {
 		}
 		return runCmd(ctx, []string{"device", "purge", uuid})
 	})
+}
+
+// registerMutatingPins: device-pin, device-track-fleet, fleet-pin,
+// release-finalize. Grouped because they all modify the device/fleet→release
+// binding (pin in, pin out, fleet pin, promote draft to final).
+func registerMutatingPins(srv *server.MCPServer) {
 
 	// device-pin -----------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-pin",
@@ -758,6 +811,10 @@ func registerMutatingTools(srv *server.MCPServer) {
 		}
 		return runCmd(ctx, []string{"release", "finalize", id})
 	})
+}
+
+// registerMutatingTags: tag-set, tag-rm.
+func registerMutatingTags(srv *server.MCPServer) {
 
 	// tag-set --------------------------------------------------------------
 	srv.AddTool(mcp.NewTool("tag-set",
@@ -813,6 +870,10 @@ func registerMutatingTools(srv *server.MCPServer) {
 		args = append(args, flag...)
 		return runCmd(ctx, args)
 	})
+}
+
+// registerMutatingEnvs: env-set, env-rm.
+func registerMutatingEnvs(srv *server.MCPServer) {
 
 	// env-set --------------------------------------------------------------
 	srv.AddTool(mcp.NewTool("env-set",
