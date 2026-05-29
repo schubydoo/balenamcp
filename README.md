@@ -292,6 +292,29 @@ Destructive steps still go through the same `destructiveHint` /
 | `rollback-device` | `uuid` | Identify a previously known-good release and roll a single device back to it, after confirming the target. |
 | `audit-config` | `fleet` | Compare device-level env/config variables against fleet defaults; surface drift, secret-shaped values (never echoed), and orphaned overrides. Read-only. |
 
+## Resources
+
+The server also exposes read-only balena state as **MCP resources** under the
+`balena://` URI scheme. Where a tool is a single CLI call the model invokes, a
+resource is context you *attach* to the conversation — and each one **composes
+several CLI calls into one JSON document**, so a single read gives the model a
+coherent picture instead of forcing several separate tool calls. Composition
+degrades gracefully: if a sub-call fails (e.g. logs for an offline device) the
+document still returns the sections that succeeded and records the rest under
+an `"errors"` object with `"partial": true`.
+
+| Resource URI | Type | Aggregates |
+|---|---|---|
+| `balena://account` | static | `whoami` + organizations |
+| `balena://fleets` | static | all accessible fleets |
+| `balena://device-types` | static | supported device types |
+| `balena://device/{uuid}` | template | device status + recent logs + env/config + tags |
+| `balena://fleet/{org}/{fleet}` | template | fleet metadata + devices + env/config + releases |
+| `balena://fleet/{org}/{fleet}/releases` | template | the fleet's release history |
+
+> Fleet slugs are `org/fleet`, so the fleet templates take the two parts as
+> separate path segments (e.g. `balena://fleet/myorg/myfleet`).
+
 ## Development
 
 ```sh

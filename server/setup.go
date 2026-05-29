@@ -257,11 +257,15 @@ func SetupServer() *server.MCPServer {
 		// Static set of workflow prompts; we never mutate the list at runtime,
 		// so listChanged notifications are not needed.
 		server.WithPromptCapabilities(false),
+		// Read-only balena state resources. We don't support subscriptions or
+		// runtime list changes, so both capability flags are off.
+		server.WithResourceCapabilities(false, false),
 	)
 
 	registerReadOnlyTools(srv)
 	registerMutatingTools(srv)
 	registerPrompts(srv)
+	registerResources(srv)
 
 	return srv
 }

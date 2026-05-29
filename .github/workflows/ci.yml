@@ -197,6 +197,44 @@ jobs:
           echo "$ptext" | grep -q 'device-info' \
             || { echo "::error::prompts/get runbook missing tool name: $ptext"; exit 1; }
 
+          # Assert the static resources are advertised over the transport.
+          resources=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+          echo "resources/list response:"
+          echo "$resources" | jq '.result.resources | length as $n | "\($n) static resources advertised"'
+          required_resources=(
+            balena://account balena://fleets balena://device-types
+          )
+          missing_resources=()
+          for u in "${required_resources[@]}"; do
+            if ! echo "$resources" | jq -e --arg u "$u" '.result.resources[] | select(.uri == $u)' >/dev/null; then
+              missing_resources+=("$u")
+            fi
+          done
+          if [ ${#missing_resources[@]} -ne 0 ]; then
+            echo "::error::missing resources: ${missing_resources[*]}"
+            exit 1
+          fi
+
+          # Read a template resource end-to-end: the device snapshot must
+          # aggregate multiple sub-calls into one JSON document keyed by uuid.
+          readres=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"balena://device/abc123"}}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+          rtext=$(echo "$readres" | jq -r '.result.contents[0].text')
+          echo "device resource (first 80 chars) -> ${rtext:0:80}"
+          # The aggregated document must be valid JSON carrying the uuid and the
+          # composed section keys.
+          echo "$rtext" | jq -e '.uuid == "abc123" and has("info") and has("logs") and has("env") and has("tags")' >/dev/null \
+            || { echo "::error::device resource document missing expected keys: $rtext"; exit 1; }
+
   coverage:
     # Measures total statement coverage with cross-package attribution
     # (-coverpkg=./...) so hits from main_test.go count against server/*. A
