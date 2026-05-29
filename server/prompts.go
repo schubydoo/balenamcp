@@ -79,6 +79,38 @@ func registerPrompts(srv *server.MCPServer) {
 		mcp.WithArgument("fleet", mcp.RequiredArgument(),
 			mcp.ArgumentDescription("Fleet name or org/fleet slug to audit.")),
 	), handleAuditConfig)
+
+	srv.AddPrompt(mcp.NewPrompt("compare-releases",
+		mcp.WithPromptDescription(
+			"Compare two releases: per-service image-size deltas, composition "+
+				"differences, and asset changes."),
+		mcp.WithArgument("release_a", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("First release commit or numeric ID (the baseline).")),
+		mcp.WithArgument("release_b", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Second release commit or numeric ID (compared against the baseline).")),
+	), handleCompareReleases)
+
+	srv.AddPrompt(mcp.NewPrompt("replicate-config",
+		mcp.WithPromptDescription(
+			"Copy env/config variables from a source fleet or device to a "+
+				"target, with an approval step before any change is written."),
+		mcp.WithArgument("source", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Source fleet slug (org/fleet) or device UUID to copy variables FROM.")),
+		mcp.WithArgument("target", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Target fleet slug (org/fleet) or device UUID to copy variables TO. Must be the same kind as source.")),
+	), handleReplicateConfig)
+
+	srv.AddPrompt(mcp.NewPrompt("bulk-tag",
+		mcp.WithPromptDescription(
+			"Apply a tag to many devices in a fleet at once, with an approval "+
+				"step before any change is written."),
+		mcp.WithArgument("fleet", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Fleet name or org/fleet slug whose devices to tag.")),
+		mcp.WithArgument("key", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Tag key to set on each device.")),
+		mcp.WithArgument("value",
+			mcp.ArgumentDescription("Tag value to set. Omit to set an empty-value tag.")),
+	), handleBulkTag)
 }
 
 // ----- handlers -----------------------------------------------------------
@@ -222,6 +254,100 @@ func handleAuditConfig(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPro
 		[]mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser,
 				mcp.NewTextContent(fmt.Sprintf(auditConfigTemplate, fleet))),
+		},
+	), nil
+}
+
+const compareReleasesTemplate = `Compare two balena releases, %[1]s and %[2]s, using the balenamcp tools, and report the differences.
+
+1. Call release-info with id=%[1]s and json=true, then with id=%[2]s and json=true. Capture each release's services and their image sizes, status, and creation date.
+2. Call release-info with id=%[1]s and composition=true, then id=%[2]s and composition=true, to capture each release's docker-compose composition.
+3. Call release-asset-list with id=%[1]s, then id=%[2]s, to capture attached binary assets and their sizes.
+
+Then report:
+- Per-service image-size deltas: which service images grew or shrank between %[1]s and %[2]s and by how much, plus the net total size change.
+- Composition differences: services added or removed, image/tag changes, and changed environment or label entries.
+- Asset differences: assets added, removed, or changed in size.
+- A one-line summary (e.g. "%[2]s is ~40 MB larger than %[1]s, driven by the <service> image").
+
+Read-only — make no changes.`
+
+func handleCompareReleases(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	a, err := requirePromptArg(req, "release_a", "release commit or ID")
+	if err != nil {
+		return nil, err
+	}
+	b, err := requirePromptArg(req, "release_b", "release commit or ID")
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewGetPromptResult(
+		fmt.Sprintf("Comparison of releases %s and %s", a, b),
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(compareReleasesTemplate, a, b))),
+		},
+	), nil
+}
+
+const replicateConfigTemplate = `Replicate environment/config variables from %[1]s to %[2]s using the balenamcp tools. Each of %[1]s and %[2]s is either a fleet slug (org/fleet) or a device UUID — pick the matching env-list/env-set flag (--fleet vs --device) for each.
+
+1. Call env-list on the SOURCE %[1]s with json=true to capture its variables (names, values, service scope, and whether each is a config variable).
+2. Call env-list on the TARGET %[2]s with json=true so you can report which variables will be newly created versus overwritten.
+3. Present a plan to the user: the variables to copy, marking each as create or overwrite, and MASKING any secret-shaped values (names containing TOKEN, KEY, SECRET, or PASSWORD). Never print secret values.
+4. WAIT for explicit user approval before writing anything.
+5. On approval, for each variable call env-set on %[2]s with the name, value, and the matching --service scope where applicable. env-set is a state-changing tool — pass confirm:true if the server requires it.
+6. Skip variables that should not be blindly copied (e.g. per-device identifiers or addresses); call these out instead of copying them.
+
+Report a summary: variables created, overwritten, and skipped.`
+
+func handleReplicateConfig(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	source, err := requirePromptArg(req, "source", "fleet slug or device UUID")
+	if err != nil {
+		return nil, err
+	}
+	target, err := requirePromptArg(req, "target", "fleet slug or device UUID")
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewGetPromptResult(
+		fmt.Sprintf("Replicate config from %s to %s", source, target),
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(replicateConfigTemplate, source, target))),
+		},
+	), nil
+}
+
+const bulkTagTemplate = `Apply the tag %[2]s = %[3]s to multiple devices in fleet %[1]s using the balenamcp tools.
+
+1. Call device-list with fleet=%[1]s and json=true to enumerate the devices. If the user described a subset (e.g. only offline devices, or devices matching a name pattern), filter to those and state the filter you applied.
+2. Present the plan: the exact list of devices that will be tagged, the tag key %[2]s, and the value %[3]s.
+3. WAIT for explicit user approval before writing anything.
+4. On approval, for each selected device call tag-set with device=<uuid>, key=%[2]s, and the value. tag-set is a state-changing tool — pass confirm:true if the server requires it.
+5. If a tag-set fails on a device, continue with the rest and collect the failure.
+
+Report a summary: devices tagged successfully and any that failed.`
+
+func handleBulkTag(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	fleet, err := requirePromptArg(req, "fleet", "fleet slug")
+	if err != nil {
+		return nil, err
+	}
+	key, err := requirePromptArg(req, "key", "tag key")
+	if err != nil {
+		return nil, err
+	}
+	value := req.Params.Arguments["value"]
+	valueDisplay := value
+	if valueDisplay == "" {
+		valueDisplay = "(empty value)"
+	}
+	return mcp.NewGetPromptResult(
+		fmt.Sprintf("Bulk-tag devices in fleet %s with %s", fleet, key),
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(bulkTagTemplate, fleet, key, valueDisplay))),
 		},
 	), nil
 }

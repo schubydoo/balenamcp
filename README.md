@@ -291,6 +291,9 @@ Destructive steps still go through the same `destructiveHint` /
 | `safe-release-rollout` | `fleet`, `release` | Canary-first rollout: record the rollback target, pin **one** device, verify it, then roll out fleet-wide — pausing for approval before each state change. |
 | `rollback-device` | `uuid` | Identify a previously known-good release and roll a single device back to it, after confirming the target. |
 | `audit-config` | `fleet` | Compare device-level env/config variables against fleet defaults; surface drift, secret-shaped values (never echoed), and orphaned overrides. Read-only. |
+| `compare-releases` | `release_a`, `release_b` | Diff two releases: per-service image-size deltas (how much bigger/smaller), composition changes, and asset differences. Read-only. |
+| `replicate-config` | `source`, `target` | Copy env/config variables from one fleet/device to another, with a masked plan and an approval step before any write. |
+| `bulk-tag` | `fleet`, `key`, `value` (optional) | Apply a tag to many devices in a fleet at once, with an approval step before any write. |
 
 ## Resources
 

@@ -169,7 +169,8 @@ jobs:
           echo "$prompts" | jq '.result.prompts | length as $n | "\($n) prompts advertised"'
           required_prompts=(
             diagnose-device fleet-health-report safe-release-rollout
-            rollback-device audit-config
+            rollback-device audit-config compare-releases replicate-config
+            bulk-tag
           )
           missing_prompts=()
           for p in "${required_prompts[@]}"; do
