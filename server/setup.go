@@ -254,10 +254,14 @@ func SetupServer() *server.MCPServer {
 		server.WithLogging(),
 		server.WithRecovery(),
 		server.WithToolCapabilities(true),
+		// Static set of workflow prompts; we never mutate the list at runtime,
+		// so listChanged notifications are not needed.
+		server.WithPromptCapabilities(false),
 	)
 
 	registerReadOnlyTools(srv)
 	registerMutatingTools(srv)
+	registerPrompts(srv)
 
 	return srv
 }

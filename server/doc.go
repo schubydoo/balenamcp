@@ -49,4 +49,17 @@
 // env-list refuses --config + --service in the same call, surfacing the
 // balena CLI's "these flags are mutually exclusive" earlier with a
 // clearer message.
+//
+// # Prompts
+//
+// Alongside tools, the server registers a small set of MCP prompts
+// (registerPrompts) — user-invoked workflow templates for multi-step
+// operations: diagnose-device, fleet-health-report, safe-release-rollout,
+// rollback-device, and audit-config. A prompt makes no balena CLI calls
+// itself; it returns a single user-role message that instructs the model
+// which tools to call and in what order, encoding operational sequencing and
+// safety ordering (e.g. safe-release-rollout pins one canary and verifies it
+// before touching the whole fleet). The actual guards stay on the tools the
+// prompt steers toward. Prompt handlers are therefore pure functions of their
+// arguments.
 package server

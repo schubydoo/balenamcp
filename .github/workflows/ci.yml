@@ -156,6 +156,47 @@ jobs:
           echo "$text" | grep -q -- '--fleet my-fleet --json' \
             || { echo "::error::dry-run argv unexpected: $text"; exit 1; }
 
+          # Assert the workflow prompts are advertised over the transport. The
+          # unit tests exercise the Go handlers directly; this checks the
+          # actual prompts/list JSON-RPC emission.
+          prompts=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"prompts/list"}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+          echo "prompts/list response:"
+          echo "$prompts" | jq '.result.prompts | length as $n | "\($n) prompts advertised"'
+          required_prompts=(
+            diagnose-device fleet-health-report safe-release-rollout
+            rollback-device audit-config
+          )
+          missing_prompts=()
+          for p in "${required_prompts[@]}"; do
+            if ! echo "$prompts" | jq -e --arg p "$p" '.result.prompts[] | select(.name == $p)' >/dev/null; then
+              missing_prompts+=("$p")
+            fi
+          done
+          if [ ${#missing_prompts[@]} -ne 0 ]; then
+            echo "::error::missing prompts: ${missing_prompts[*]}"
+            exit 1
+          fi
+
+          # Drive one prompts/get end-to-end: assert the arg is interpolated
+          # and the runbook names a real tool the model should call.
+          getp=$(printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"diagnose-device","arguments":{"uuid":"abc123"}}}' \
+            | "$BIN" -dry-run 2>/dev/null \
+            | sed -n '2p')
+          ptext=$(echo "$getp" | jq -r '.result.messages[0].content.text')
+          echo "diagnose-device prompt (first 60 chars) -> ${ptext:0:60}"
+          echo "$ptext" | grep -q 'abc123' \
+            || { echo "::error::prompts/get did not interpolate uuid: $ptext"; exit 1; }
+          echo "$ptext" | grep -q 'device-info' \
+            || { echo "::error::prompts/get runbook missing tool name: $ptext"; exit 1; }
+
   coverage:
     # Measures total statement coverage with cross-package attribution
     # (-coverpkg=./...) so hits from main_test.go count against server/*. A

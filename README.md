@@ -274,6 +274,24 @@ state change. Safe to call without confirmation.
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
 of `fleet` / `device`.
 
+## Prompts
+
+Beyond tools, the server exposes **MCP prompts** — guided, multi-step
+workflows you invoke from your client (in Claude Desktop they appear in the
+prompt/slash picker). A prompt runs no balena commands itself; it returns a
+runbook that tells the model which tools to call and in what order, encoding
+the sequencing and safety ordering an experienced operator would follow.
+Destructive steps still go through the same `destructiveHint` /
+`BALENAMCP_REQUIRE_CONFIRM` guards as any other tool call.
+
+| Prompt | Arguments | What it walks the model through |
+|---|---|---|
+| `diagnose-device` | `uuid` | Pull status, logs, env, tags, and pin state for one device, then summarize a health verdict and likely root cause. Read-only. |
+| `fleet-health-report` | `fleet` | Tally device status across a fleet, compare each device against the fleet's target release, flag what needs attention. Read-only. |
+| `safe-release-rollout` | `fleet`, `release` | Canary-first rollout: record the rollback target, pin **one** device, verify it, then roll out fleet-wide — pausing for approval before each state change. |
+| `rollback-device` | `uuid` | Identify a previously known-good release and roll a single device back to it, after confirming the target. |
+| `audit-config` | `fleet` | Compare device-level env/config variables against fleet defaults; surface drift, secret-shaped values (never echoed), and orphaned overrides. Read-only. |
+
 ## Development
 
 ```sh
