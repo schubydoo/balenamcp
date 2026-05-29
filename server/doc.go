@@ -67,10 +67,11 @@
 // # Resources
 //
 // The server also exposes read-only balena state as MCP resources
-// (registerResources) under the balena:// URI scheme — three static
-// resources (balena://account, balena://fleets, balena://device-types) and
-// three URI templates (balena://device/{uuid},
-// balena://fleet/{org}/{fleet}, balena://fleet/{org}/{fleet}/releases).
+// (registerResources) under the balena:// URI scheme — four static
+// resources (balena://account, balena://account/keys, balena://fleets,
+// balena://device-types) and five URI templates (balena://device/{uuid},
+// balena://fleet/{org}/{fleet}, balena://fleet/{org}/{fleet}/releases,
+// balena://release/{id}, balena://os-versions/{type}).
 // Whereas a tool is one CLI call invoked by the model, a resource is
 // user-attached context that COMPOSES several CLI calls into one JSON
 // document — the device snapshot folds status, recent logs, env/config

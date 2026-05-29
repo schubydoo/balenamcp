@@ -309,11 +309,14 @@ an `"errors"` object with `"partial": true`.
 | Resource URI | Type | Aggregates |
 |---|---|---|
 | `balena://account` | static | `whoami` + organizations |
+| `balena://account/keys` | static | registered SSH public keys + API key names (no secrets) |
 | `balena://fleets` | static | all accessible fleets |
 | `balena://device-types` | static | supported device types |
 | `balena://device/{uuid}` | template | device status + recent logs + env/config + tags |
 | `balena://fleet/{org}/{fleet}` | template | fleet metadata + devices + env/config + releases |
 | `balena://fleet/{org}/{fleet}/releases` | template | the fleet's release history |
+| `balena://release/{id}` | template | release metadata + docker-compose composition + assets |
+| `balena://os-versions/{type}` | template | available balenaOS versions (stable + ESR + draft) for a device type |
 
 > Fleet slugs are `org/fleet`, so the fleet templates take the two parts as
 > separate path segments (e.g. `balena://fleet/myorg/myfleet`).
