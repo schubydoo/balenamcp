@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0](https://github.com/schubydoo/balenamcp/compare/v1.0.1...v1.1.0) (2026-05-29)
+
+
+### Features
+
+* add balena:// MCP resources ([#22](https://github.com/schubydoo/balenamcp/issues/22)) ([ab55db5](https://github.com/schubydoo/balenamcp/commit/ab55db53bf061187a04389f05c9fb1d08bc7c752))
+* add compare-releases, replicate-config, bulk-tag prompts ([#23](https://github.com/schubydoo/balenamcp/issues/23)) ([0d6ffc5](https://github.com/schubydoo/balenamcp/commit/0d6ffc5467f62ec9eecf21784fc988efbabb60e1))
+* add MCP workflow prompts ([#20](https://github.com/schubydoo/balenamcp/issues/20)) ([464242f](https://github.com/schubydoo/balenamcp/commit/464242fa6ab13c55a6809a6f870e366af00ff8eb))
+* add release, os-versions, and account-keys resources ([#24](https://github.com/schubydoo/balenamcp/issues/24)) ([8d62ba4](https://github.com/schubydoo/balenamcp/commit/8d62ba4f94872492ecdd644a8a189637530fc9d5))
+
 ## [1.0.1](https://github.com/schubydoo/balenamcp/compare/v1.0.0...v1.0.1) (2026-05-28)
 
 
