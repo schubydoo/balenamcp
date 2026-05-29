@@ -1,8 +1,11 @@
-// Package server implements the MCP tool registry for balenamcp.
+// Package server implements the MCP server for balenamcp — its tools,
+// prompts, and resources.
 //
 // The package exposes one entry point — [SetupServer] — that constructs an
-// [github.com/mark3labs/mcp-go/server.MCPServer], wires up all 29 balena CLI
-// wrappers as MCP tools, and returns it ready to serve over stdio. The
+// [github.com/mark3labs/mcp-go/server.MCPServer], wires up the 29 balena CLI
+// wrappers as MCP tools (registerReadOnlyTools/registerMutatingTools) along
+// with the workflow prompts (registerPrompts) and read-only resources
+// (registerResources), and returns it ready to serve over stdio. The
 // invoking process (typically [main]) calls
 // [github.com/mark3labs/mcp-go/server.ServeStdio] on the returned server.
 //
