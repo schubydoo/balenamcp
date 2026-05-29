@@ -52,10 +52,11 @@
 //
 // # Prompts
 //
-// Alongside tools, the server registers a small set of MCP prompts
+// Alongside tools, the server registers a set of MCP prompts
 // (registerPrompts) — user-invoked workflow templates for multi-step
 // operations: diagnose-device, fleet-health-report, safe-release-rollout,
-// rollback-device, and audit-config. A prompt makes no balena CLI calls
+// rollback-device, audit-config, compare-releases, replicate-config, and
+// bulk-tag. A prompt makes no balena CLI calls
 // itself; it returns a single user-role message that instructs the model
 // which tools to call and in what order, encoding operational sequencing and
 // safety ordering (e.g. safe-release-rollout pins one canary and verifies it

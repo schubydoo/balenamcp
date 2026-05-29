@@ -101,6 +101,45 @@ func TestPromptHandlers(t *testing.T) {
 				"env-list", "device-list", "config=true",
 			},
 		},
+		{
+			name:     "compare-releases",
+			handler:  handleCompareReleases,
+			args:     map[string]string{"release_a": "aaa111", "release_b": "bbb222"},
+			wantDesc: "aaa111",
+			wantInText: []string{
+				"aaa111", "bbb222",
+				"release-info", "release-asset-list", "image-size", "composition=true",
+			},
+		},
+		{
+			name:     "replicate-config",
+			handler:  handleReplicateConfig,
+			args:     map[string]string{"source": "org/src", "target": "org/dst"},
+			wantDesc: "org/src",
+			wantInText: []string{
+				"org/src", "org/dst",
+				"env-list", "env-set", "approval", "MASKING",
+			},
+		},
+		{
+			name:     "bulk-tag with value",
+			handler:  handleBulkTag,
+			args:     map[string]string{"fleet": "org/bt", "key": "site", "value": "warehouse"},
+			wantDesc: "org/bt",
+			wantInText: []string{
+				"org/bt", "site", "warehouse",
+				"device-list", "tag-set", "approval",
+			},
+		},
+		{
+			name:     "bulk-tag empty value",
+			handler:  handleBulkTag,
+			args:     map[string]string{"fleet": "org/bt", "key": "flagged"},
+			wantDesc: "org/bt",
+			wantInText: []string{
+				"flagged", "(empty value)", "tag-set",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -137,6 +176,12 @@ func TestPromptHandlersMissingArg(t *testing.T) {
 		{"audit-config no fleet", handleAuditConfig, map[string]string{}, "fleet"},
 		{"safe-release-rollout no fleet", handleSafeReleaseRollout, map[string]string{"release": "r"}, "fleet"},
 		{"safe-release-rollout no release", handleSafeReleaseRollout, map[string]string{"fleet": "f"}, "release"},
+		{"compare-releases no release_a", handleCompareReleases, map[string]string{"release_b": "b"}, "release_a"},
+		{"compare-releases no release_b", handleCompareReleases, map[string]string{"release_a": "a"}, "release_b"},
+		{"replicate-config no source", handleReplicateConfig, map[string]string{"target": "t"}, "source"},
+		{"replicate-config no target", handleReplicateConfig, map[string]string{"source": "s"}, "target"},
+		{"bulk-tag no fleet", handleBulkTag, map[string]string{"key": "k"}, "fleet"},
+		{"bulk-tag no key", handleBulkTag, map[string]string{"fleet": "f"}, "key"},
 		// empty-string value is treated as missing, not as a valid identifier.
 		{"diagnose-device empty uuid", handleDiagnoseDevice, map[string]string{"uuid": ""}, "uuid"},
 	}
