@@ -62,4 +62,20 @@
 // before touching the whole fleet). The actual guards stay on the tools the
 // prompt steers toward. Prompt handlers are therefore pure functions of their
 // arguments.
+//
+// # Resources
+//
+// The server also exposes read-only balena state as MCP resources
+// (registerResources) under the balena:// URI scheme — three static
+// resources (balena://account, balena://fleets, balena://device-types) and
+// three URI templates (balena://device/{uuid},
+// balena://fleet/{org}/{fleet}, balena://fleet/{org}/{fleet}/releases).
+// Whereas a tool is one CLI call invoked by the model, a resource is
+// user-attached context that COMPOSES several CLI calls into one JSON
+// document — the device snapshot folds status, recent logs, env/config
+// variables, and tags into a single read. Composition degrades gracefully:
+// the shared composite helper records a failed sub-call under an "errors"
+// object with "partial": true rather than failing the whole read. Fleet
+// slugs contain a slash, so the fleet templates use two path params
+// reassembled by parseFleetURI.
 package server
