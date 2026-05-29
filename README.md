@@ -16,6 +16,12 @@ the [balena CLI](https://github.com/balena-io/balena-cli) so MCP-aware agents
 fleets, inspect devices, manage tags and env vars, pin releases, reboot
 devices, and more.
 
+It exposes all three MCP primitives: **tools** (direct balena actions),
+**prompts** (guided multi-step workflows like canary rollouts and device
+diagnosis), and **resources** (read-only fleet/device/release state you attach
+as context). See the [Tools](#tools), [Prompts](#prompts), and
+[Resources](#resources) sections below.
+
 This is a personal fork of [klutchell/balenamcp](https://github.com/klutchell/balenamcp)
 brought up to date with the current balena CLI and the current `mark3labs/mcp-go`.
 
