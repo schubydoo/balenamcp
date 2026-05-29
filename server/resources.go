@@ -128,6 +128,23 @@ func parseFleetURI(uri string) (string, error) {
 	return parts[0] + "/" + parts[1], nil
 }
 
+// parseSingleSegment extracts the single path segment after prefix from a
+// "<prefix><segment>" URI, rejecting an empty value, a value with an extra
+// path segment, or a flag-shaped value. `what` names the segment in errors.
+func parseSingleSegment(uri, prefix, what string) (string, error) {
+	if !strings.HasPrefix(uri, prefix) {
+		return "", fmt.Errorf("not a %s URI: %q", what, uri)
+	}
+	seg := strings.TrimPrefix(uri, prefix)
+	if seg == "" || strings.Contains(seg, "/") {
+		return "", fmt.Errorf("malformed %s URI %q", what, uri)
+	}
+	if strings.HasPrefix(seg, "-") {
+		return "", fmt.Errorf("invalid %s %q: identifiers cannot start with '-'", what, seg)
+	}
+	return seg, nil
+}
+
 // ----- registration -------------------------------------------------------
 
 // registerResources wires the read-only balena state resources onto srv:
@@ -150,6 +167,11 @@ func registerResources(srv *server.MCPServer) {
 		mcp.WithMIMEType(resourceMIME),
 	), handleDeviceTypesResource)
 
+	srv.AddResource(mcp.NewResource("balena://account/keys", "balenaCloud access keys",
+		mcp.WithResourceDescription("The user's registered SSH public keys and API key names (no secret values). Useful for checking whether `balena ssh` access is set up."),
+		mcp.WithMIMEType(resourceMIME),
+	), handleAccountKeysResource)
+
 	srv.AddResourceTemplate(mcp.NewResourceTemplate("balena://device/{uuid}", "Device snapshot",
 		mcp.WithTemplateDescription("Status, recent logs, env/config variables, and tags for one device, aggregated into a single document."),
 		mcp.WithTemplateMIMEType(resourceMIME),
@@ -164,6 +186,16 @@ func registerResources(srv *server.MCPServer) {
 		mcp.WithTemplateDescription("The release history of a fleet."),
 		mcp.WithTemplateMIMEType(resourceMIME),
 	), handleFleetReleasesResource)
+
+	srv.AddResourceTemplate(mcp.NewResourceTemplate("balena://release/{id}", "Release snapshot",
+		mcp.WithTemplateDescription("Metadata, docker-compose composition, and attached assets for one release, aggregated into a single document."),
+		mcp.WithTemplateMIMEType(resourceMIME),
+	), handleReleaseResource)
+
+	srv.AddResourceTemplate(mcp.NewResourceTemplate("balena://os-versions/{type}", "balenaOS versions",
+		mcp.WithTemplateDescription("Available balenaOS versions for a device type — stable, ESR, and draft channels in one document."),
+		mcp.WithTemplateMIMEType(resourceMIME),
+	), handleOSVersionsResource)
 }
 
 // ----- handlers -----------------------------------------------------------
@@ -253,6 +285,52 @@ func fleetReleasesResource(ctx context.Context, run cliRunner, uri string) ([]mc
 	}
 	doc := composite(ctx, run, map[string]any{"fleet": slug}, []sectionSpec{
 		{key: "releases", args: []string{"release", "list", slug, "--json"}},
+	})
+	return textContents(uri, doc), nil
+}
+
+func handleAccountKeysResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return accountKeysResource(ctx, executeCommand, req.Params.URI)
+}
+
+func accountKeysResource(ctx context.Context, run cliRunner, uri string) ([]mcp.ResourceContents, error) {
+	doc := composite(ctx, run, nil, []sectionSpec{
+		{key: "ssh_keys", args: []string{"ssh-key", "list"}},
+		{key: "api_keys", args: []string{"api-key", "list"}},
+	})
+	return textContents(uri, doc), nil
+}
+
+func handleReleaseResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return releaseResource(ctx, executeCommand, req.Params.URI)
+}
+
+func releaseResource(ctx context.Context, run cliRunner, uri string) ([]mcp.ResourceContents, error) {
+	id, err := parseSingleSegment(uri, "balena://release/", "release")
+	if err != nil {
+		return nil, err
+	}
+	doc := composite(ctx, run, map[string]any{"release": id}, []sectionSpec{
+		{key: "info", args: []string{"release", id, "--json"}},
+		{key: "composition", args: []string{"release", id, "--composition"}},
+		{key: "assets", args: []string{"release-asset", "list", id, "--json"}},
+	})
+	return textContents(uri, doc), nil
+}
+
+func handleOSVersionsResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return osVersionsResource(ctx, executeCommand, req.Params.URI)
+}
+
+func osVersionsResource(ctx context.Context, run cliRunner, uri string) ([]mcp.ResourceContents, error) {
+	deviceType, err := parseSingleSegment(uri, "balena://os-versions/", "device type")
+	if err != nil {
+		return nil, err
+	}
+	doc := composite(ctx, run, map[string]any{"device_type": deviceType}, []sectionSpec{
+		{key: "stable", args: []string{"os", "versions", deviceType}},
+		{key: "esr", args: []string{"os", "versions", deviceType, "--esr"}},
+		{key: "draft", args: []string{"os", "versions", deviceType, "--include-draft"}},
 	})
 	return textContents(uri, doc), nil
 }

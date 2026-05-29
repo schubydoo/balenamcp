@@ -199,18 +199,26 @@ func TestCompositeBenignError(t *testing.T) {
 
 func TestResourceComposers(t *testing.T) {
 	run := fakeRunner(map[string]string{
-		"whoami":                         "user: schuby",
-		"organization list":              "org table",
-		"fleet list --json":              `[{"slug":"o/f"}]`,
-		"device-type list --json":        `[{"slug":"raspberrypi4"}]`,
-		"device dev1 --json":             `{"uuid":"dev1","status":"online"}`,
-		"device logs dev1":               "log line 1",
-		"env list --device dev1 --json":  `[]`,
-		"tag list --device dev1":         "tag table",
-		"fleet o/f --json":               `{"slug":"o/f"}`,
-		"device list --fleet o/f --json": `[]`,
-		"env list --fleet o/f --json":    `[]`,
-		"release list o/f --json":        `[{"commit":"abc"}]`,
+		"whoami":                                   "user: schuby",
+		"organization list":                        "org table",
+		"fleet list --json":                        `[{"slug":"o/f"}]`,
+		"device-type list --json":                  `[{"slug":"raspberrypi4"}]`,
+		"device dev1 --json":                       `{"uuid":"dev1","status":"online"}`,
+		"device logs dev1":                         "log line 1",
+		"env list --device dev1 --json":            `[]`,
+		"tag list --device dev1":                   "tag table",
+		"fleet o/f --json":                         `{"slug":"o/f"}`,
+		"device list --fleet o/f --json":           `[]`,
+		"env list --fleet o/f --json":              `[]`,
+		"release list o/f --json":                  `[{"commit":"abc"}]`,
+		"ssh-key list":                             "ssh key table",
+		"api-key list":                             "api key table",
+		"release rel9 --json":                      `{"commit":"rel9","status":"success"}`,
+		"release rel9 --composition":               "services:\n  main:\n    image: x",
+		"release-asset list rel9 --json":           `[{"name":"firmware.bin"}]`,
+		"os versions raspberrypi4":                 "2.100.0\n2.99.0",
+		"os versions raspberrypi4 --esr":           "2.98.0",
+		"os versions raspberrypi4 --include-draft": "2.101.0-draft",
 	}, nil)
 
 	cases := []struct {
@@ -237,6 +245,15 @@ func TestResourceComposers(t *testing.T) {
 		{"fleet releases", func() ([]mcp.ResourceContents, error) {
 			return fleetReleasesResource(context.Background(), run, "balena://fleet/o/f/releases")
 		}, "balena://fleet/o/f/releases", []string{"releases", "abc"}},
+		{"account keys", func() ([]mcp.ResourceContents, error) {
+			return accountKeysResource(context.Background(), run, "balena://account/keys")
+		}, "balena://account/keys", []string{"ssh_keys", "api_keys", "ssh key table"}},
+		{"release", func() ([]mcp.ResourceContents, error) {
+			return releaseResource(context.Background(), run, "balena://release/rel9")
+		}, "balena://release/rel9", []string{"rel9", "info", "composition", "assets", "firmware.bin"}},
+		{"os versions", func() ([]mcp.ResourceContents, error) {
+			return osVersionsResource(context.Background(), run, "balena://os-versions/raspberrypi4")
+		}, "balena://os-versions/raspberrypi4", []string{"raspberrypi4", "stable", "esr", "draft", "2.100.0"}},
 	}
 
 	for _, tc := range cases {
@@ -278,6 +295,47 @@ func TestResourceComposersParseError(t *testing.T) {
 	if _, err := fleetReleasesResource(context.Background(), run, "balena://fleet/bad/releases"); err == nil {
 		t.Error("fleetReleasesResource: want error on malformed URI")
 	}
+	if _, err := releaseResource(context.Background(), run, "balena://release/"); err == nil {
+		t.Error("releaseResource: want error on malformed URI")
+	}
+	if _, err := osVersionsResource(context.Background(), run, "balena://os-versions/"); err == nil {
+		t.Error("osVersionsResource: want error on malformed URI")
+	}
+}
+
+// ----- parseSingleSegment ------------------------------------------------
+
+func TestParseSingleSegment(t *testing.T) {
+	const prefix = "balena://release/"
+	cases := []struct {
+		name    string
+		uri     string
+		want    string
+		wantErr bool
+	}{
+		{"valid", "balena://release/abc123", "abc123", false},
+		{"wrong prefix", "balena://device/abc", "", true},
+		{"empty", "balena://release/", "", true},
+		{"extra segment", "balena://release/a/b", "", true},
+		{"flag shaped", "balena://release/-x", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseSingleSegment(tc.uri, prefix, "release")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // ----- exported handlers in dry-run --------------------------------------
@@ -302,6 +360,9 @@ func TestResourceHandlersDryRun(t *testing.T) {
 		{"device", handleDeviceResource, "balena://device/abc123"},
 		{"fleet", handleFleetResource, "balena://fleet/myorg/myfleet"},
 		{"fleet releases", handleFleetReleasesResource, "balena://fleet/myorg/myfleet/releases"},
+		{"account keys", handleAccountKeysResource, "balena://account/keys"},
+		{"release", handleReleaseResource, "balena://release/abc123"},
+		{"os versions", handleOSVersionsResource, "balena://os-versions/raspberrypi4"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
