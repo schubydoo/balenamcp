@@ -45,7 +45,7 @@ jobs:
       # cosign falls back to interactive flow, which doesn't work in CI.
       id-token: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # Goreleaser walks the git log to determine the version, prior
           # tag, and changelog window. Default fetch-depth=1 leaves it
