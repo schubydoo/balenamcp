@@ -375,6 +375,22 @@ Layout:
 - `livetest_test.go` — build-tagged (`integration`) end-to-end sweep against
   real balenaCloud, opt-in via env vars
 
+### Keeping up with the balena CLI
+
+balenamcp shells out to whatever `balena` is on `PATH`, so upstream CLI changes
+(a renamed flag, a moved subcommand) can drift away from the argv our tools
+construct. The dry-run tests assert what we *send*, not what the current CLI
+*accepts*, so drift is caught two ways:
+
+- **`.balena-cli-version`** records the CLI version the wrapped command surface
+  has been verified against. A Renovate `customManager` (see `renovate.json`)
+  watches the `balena-cli` npm package and opens a `chore(deps)` PR — with the
+  upstream changelog attached — whenever a newer version ships. Review that PR
+  for parameter drift and merge it only once the new version is confirmed
+  clean; the merge is the record that it was reviewed.
+- For the actual review, the **`balena-cli-parity`** check compares the flags
+  and subcommands we pass against the current CLI surface.
+
 ### Release flow
 
 Releases are automated via [release-please](https://github.com/googleapis/release-please)
