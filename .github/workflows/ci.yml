@@ -122,9 +122,13 @@ jobs:
             device-logs device-type-list release-list release-info
             release-asset-list tag-list env-list os-versions
             organization-list ssh-key-list api-key-list
+            device-detect device-local-mode-get
             device-reboot device-restart device-shutdown device-purge
-            device-pin device-track-fleet fleet-pin release-finalize
-            tag-set tag-rm env-set env-rm
+            device-ssh device-pin device-track-fleet fleet-pin release-finalize
+            tag-set tag-rm env-set env-rm env-rename
+            device-local-mode-set release-invalidate release-validate
+            fleet-track-latest fleet-purge fleet-restart fleet-rm
+            organization-create organization-rename organization-rm api-key-revoke
           )
           missing=()
           for t in "${required[@]}"; do
@@ -170,7 +174,7 @@ jobs:
           required_prompts=(
             diagnose-device fleet-health-report safe-release-rollout
             rollback-device audit-config compare-releases replicate-config
-            bulk-tag
+            bulk-tag deep-diagnose-device prepare-local-dev rotate-api-keys
           )
           missing_prompts=()
           for p in "${required_prompts[@]}"; do
@@ -209,7 +213,7 @@ jobs:
           echo "$resources" | jq '.result.resources | length as $n | "\($n) static resources advertised"'
           required_resources=(
             balena://account balena://account/keys balena://fleets
-            balena://device-types
+            balena://device-types balena://gotchas
           )
           missing_resources=()
           for u in "${required_resources[@]}"; do

@@ -2,7 +2,7 @@
 // prompts, and resources.
 //
 // The package exposes one entry point — [SetupServer] — that constructs an
-// [github.com/mark3labs/mcp-go/server.MCPServer], wires up the 29 balena CLI
+// [github.com/mark3labs/mcp-go/server.MCPServer], wires up the 44 balena CLI
 // wrappers as MCP tools (registerReadOnlyTools/registerMutatingTools) along
 // with the workflow prompts (registerPrompts) and read-only resources
 // (registerResources), and returns it ready to serve over stdio. The

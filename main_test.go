@@ -200,6 +200,21 @@ func TestReadOnlyTools(t *testing.T) {
 	expect(t, c, ctx, "api-key-list",
 		map[string]any{"fleet": "my-fleet"},
 		"balena api-key list --fleet my-fleet")
+
+	// device-detect — LAN scan; optional --timeout/--verbose/--json.
+	expect(t, c, ctx, "device-detect", nil, "balena device detect")
+	expect(t, c, ctx, "device-detect",
+		map[string]any{"json": true}, "balena device detect --json")
+	expect(t, c, ctx, "device-detect",
+		map[string]any{"timeout": float64(120), "verbose": true},
+		"balena device detect --timeout 120 --verbose")
+	// timeout absent must NOT emit --timeout (guards the -1 sentinel).
+	expectNot(t, c, ctx, "device-detect", nil, "--timeout")
+
+	// device-local-mode-get — read-only status query.
+	expect(t, c, ctx, "device-local-mode-get",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device local-mode 7cf02a6 --status")
 }
 
 func TestMutatingTools(t *testing.T) {
@@ -234,6 +249,26 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "device-track-fleet",
 		map[string]any{"uuid": "7cf02a6"},
 		"balena device track-fleet 7cf02a6")
+
+	// device-ssh: one-shot command over the SSH gateway. The command travels
+	// via stdin (rendered as <<<"...\nexit\n" in dry-run), not argv.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "cat /proc/meminfo"},
+		"balena device ssh 7cf02a6")
+	// service-container target appends the service name as the second arg.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "ls", "service": "main"},
+		"balena device ssh 7cf02a6 main")
+	// the piped payload carries the command plus the auto-appended `exit` that
+	// keeps the remote shell from hanging on stdin EOF.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
+		`<<<"uptime\nexit\n"`)
+	// without a service the second positional arg must NOT appear — guards a
+	// mutation that always-appends the service.
+	expectNot(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
+		"balena device ssh 7cf02a6 uptime")
 
 	// release finalize
 	expect(t, c, ctx, "release-finalize",
@@ -272,6 +307,59 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "fleet-pin",
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet pin myorg/myfleet")
+
+	// release invalidate / validate
+	expect(t, c, ctx, "release-invalidate",
+		map[string]any{"id": "abc123"}, "balena release invalidate abc123")
+	expect(t, c, ctx, "release-validate",
+		map[string]any{"id": "abc123"}, "balena release validate abc123")
+
+	// fleet lifecycle
+	expect(t, c, ctx, "fleet-track-latest",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet track-latest myorg/myfleet")
+	expect(t, c, ctx, "fleet-purge",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet purge myorg/myfleet")
+	expect(t, c, ctx, "fleet-restart",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet restart myorg/myfleet")
+	// fleet-rm always passes --yes (no interactive prompt over MCP).
+	expect(t, c, ctx, "fleet-rm",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena fleet rm myorg/myfleet --yes")
+
+	// organization create / rename / rm
+	expect(t, c, ctx, "organization-create",
+		map[string]any{"name": "acme"}, "balena organization create acme")
+	expect(t, c, ctx, "organization-rename",
+		map[string]any{"handle": "acme", "new_name": "acme2"},
+		"balena organization rename acme acme2")
+	expect(t, c, ctx, "organization-rm",
+		map[string]any{"handle": "acme"}, "balena organization rm acme --yes")
+
+	// device-local-mode-set — enable vs disable map to distinct flags.
+	expect(t, c, ctx, "device-local-mode-set",
+		map[string]any{"uuid": "7cf02a6", "enable": true},
+		"balena device local-mode 7cf02a6 --enable")
+	expect(t, c, ctx, "device-local-mode-set",
+		map[string]any{"uuid": "7cf02a6", "enable": false},
+		"balena device local-mode 7cf02a6 --disable")
+	expectNot(t, c, ctx, "device-local-mode-set",
+		map[string]any{"uuid": "7cf02a6", "enable": true},
+		"--disable")
+
+	// env-rename — updates value by numeric ID; selector booleans.
+	expect(t, c, ctx, "env-rename",
+		map[string]any{"id": float64(42), "value": "newval"},
+		"balena env rename 42 newval")
+	expect(t, c, ctx, "env-rename",
+		map[string]any{"id": float64(42), "value": "newval", "device": true, "config": true},
+		"balena env rename 42 newval --device --config")
+
+	// api-key-revoke — single comma-separated positional, never split.
+	expect(t, c, ctx, "api-key-revoke",
+		map[string]any{"ids": "123,456"}, "balena api-key revoke 123,456")
 }
 
 // TestConfirmGate_AllDestructiveTools sweeps the BALENAMCP_REQUIRE_CONFIRM
@@ -297,12 +385,25 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"device-purge", map[string]any{"uuid": "7cf02a6"}},
 		{"device-pin", map[string]any{"uuid": "7cf02a6"}},
 		{"device-track-fleet", map[string]any{"uuid": "7cf02a6"}},
+		{"device-ssh", map[string]any{"uuid": "7cf02a6", "command": "ls"}},
 		{"fleet-pin", map[string]any{"fleet": "myorg/myfleet"}},
 		{"release-finalize", map[string]any{"id": "123"}},
 		{"tag-set", map[string]any{"key": "owner", "fleet": "my-fleet"}},
 		{"tag-rm", map[string]any{"key": "owner", "fleet": "my-fleet"}},
 		{"env-set", map[string]any{"name": "DEBUG", "fleet": "my-fleet"}},
 		{"env-rm", map[string]any{"id": float64(42)}},
+		{"env-rename", map[string]any{"id": float64(42), "value": "x"}},
+		{"release-invalidate", map[string]any{"id": "abc123"}},
+		{"release-validate", map[string]any{"id": "abc123"}},
+		{"fleet-track-latest", map[string]any{"fleet": "myorg/myfleet"}},
+		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
+		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
+		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"organization-create", map[string]any{"name": "acme"}},
+		{"organization-rename", map[string]any{"handle": "acme", "new_name": "acme2"}},
+		{"organization-rm", map[string]any{"handle": "acme"}},
+		{"device-local-mode-set", map[string]any{"uuid": "7cf02a6", "enable": true}},
+		{"api-key-revoke", map[string]any{"ids": "123"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
@@ -318,6 +419,47 @@ func TestErrors(t *testing.T) {
 	expectError(t, c, ctx, "device-info", nil, "uuid")
 	expectError(t, c, ctx, "release-info", nil, "id")
 	expectError(t, c, ctx, "device-reboot", nil, "uuid")
+
+	// device-ssh: uuid present but command empty/missing is a handler error,
+	// and a flag-shaped uuid is rejected like any other identifier.
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6"}, "command")
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "   "}, "command")
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "--help", "command": "ls"}, "cannot start with '-'")
+
+	// env-rename: --config and --service are mutually exclusive; empty value
+	// is rejected; flag-shaped value is fine (free-form) but missing value errors.
+	expectError(t, c, ctx, "env-rename",
+		map[string]any{"id": float64(42), "value": "x", "config": true, "service": true},
+		"mutually exclusive")
+	expectError(t, c, ctx, "env-rename",
+		map[string]any{"id": float64(42)}, "value")
+
+	// device-local-mode-set: enable is required.
+	expectError(t, c, ctx, "device-local-mode-set",
+		map[string]any{"uuid": "7cf02a6"}, "enable")
+
+	// flag-shape guard reaches the new identifier-shaped args too.
+	expectError(t, c, ctx, "fleet-rm",
+		map[string]any{"fleet": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "api-key-revoke",
+		map[string]any{"ids": "-1"}, "cannot start with '-'")
+	// optional/second identifiers on new tools must also be flag-shape guarded
+	// (these are the branches that survive mutation when only the first guard
+	// is tested).
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "ls", "service": "-foo"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "organization-rename",
+		map[string]any{"handle": "acme", "new_name": "-foo"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-local-mode-get",
+		map[string]any{"uuid": "--help"}, "cannot start with '-'")
+	// env-rename: missing numeric id hits the RequireInt error branch.
+	expectError(t, c, ctx, "env-rename",
+		map[string]any{"value": "x"}, "id")
 
 	// tag-list / tag-set / tag-rm — exactly-one-of fleet|device|release
 	expectError(t, c, ctx, "tag-list", nil, "one of")

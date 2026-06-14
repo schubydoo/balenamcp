@@ -401,6 +401,65 @@ func TestRunCmd_ErrorPath(t *testing.T) {
 	}
 }
 
+// TestRunCmdStdin_ErrorPath mirrors TestRunCmd_ErrorPath for the stdin variant.
+// A pre-cancelled context drives executeCommandStdin into an error on the
+// real-exec path, exercising the err != nil branch in runCmdStdin that dry-run
+// tests never reach (device-ssh is only ever called in dry-run elsewhere).
+func TestRunCmdStdin_ErrorPath(t *testing.T) {
+	orig := Config.DryRun
+	Config.DryRun = false
+	defer func() { Config.DryRun = orig }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := runCmdStdin(ctx, []string{"version"}, "hello\nexit\n")
+	if err != nil {
+		t.Fatalf("runCmdStdin should swallow CLI errors into a tool-result, got Go error: %v", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("expected IsError tool result, got: %+v", res)
+	}
+}
+
+// TestExecuteCommandStdinWiring proves the real-exec path actually delivers the
+// stdin payload to the subprocess — the one behavior the dry-run tests cannot
+// cover (dry-run returns before cmd.Stdin is set). It points execBinary at
+// `cat`, which echoes stdin, and asserts the payload round-trips. Without this,
+// a regression dropping `cmd.Stdin = ...` would pass every other test while
+// silently sending nothing to the device.
+func TestExecuteCommandStdinWiring(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no portable stdin-echo binary on Windows runner; CI covers Linux + macOS")
+	}
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skipf("cat not on PATH: %v", err)
+	}
+	origDry, origBin := Config.DryRun, execBinary
+	Config.DryRun = false
+	execBinary = "cat" // cat with no args reads stdin and echoes it to stdout
+	defer func() { Config.DryRun, execBinary = origDry, origBin }()
+
+	out, err := executeCommandStdin(context.Background(), nil, "hello from stdin\nexit\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "hello from stdin") {
+		t.Fatalf("stdin was not delivered to subprocess; got: %q", out)
+	}
+
+	// Companion negative: with no stdin payload, cmd.Stdin stays nil and cat
+	// reads from the (empty) test stdin, returning empty — confirms we only
+	// wire stdin when a payload is present.
+	out, err = executeCommandStdin(context.Background(), nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error on empty-stdin call: %v", err)
+	}
+	if strings.Contains(out, "hello from stdin") {
+		t.Fatalf("empty-stdin call should not echo prior payload; got: %q", out)
+	}
+}
+
 // ----- guardDestructive --------------------------------------------------
 
 // TestGuardDestructive exercises both layers in sequence: the

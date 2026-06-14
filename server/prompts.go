@@ -111,6 +111,31 @@ func registerPrompts(srv *server.MCPServer) {
 		mcp.WithArgument("value",
 			mcp.ArgumentDescription("Tag value to set. Omit to set an empty-value tag.")),
 	), handleBulkTag)
+
+	srv.AddPrompt(mcp.NewPrompt("deep-diagnose-device",
+		mcp.WithPromptDescription(
+			"Deep host-level diagnosis of a device over SSH: pulls memory, disk, "+
+				"load, failed services, and container state via device-ssh, then "+
+				"summarizes resource risks and root cause."),
+		mcp.WithArgument("uuid", mcp.RequiredArgument(),
+			mcp.ArgumentDescription("Device UUID to diagnose.")),
+	), handleDeepDiagnoseDevice)
+
+	srv.AddPrompt(mcp.NewPrompt("prepare-local-dev",
+		mcp.WithPromptDescription(
+			"Enable local mode on a device for LAN-based development, discovering "+
+				"it with device-detect first if needed, with an approval step."),
+		mcp.WithArgument("device",
+			mcp.ArgumentDescription("Device UUID or IP/.local address. Omit to discover devices on the LAN with device-detect.")),
+	), handlePrepareLocalDev)
+
+	srv.AddPrompt(mcp.NewPrompt("rotate-api-keys",
+		mcp.WithPromptDescription(
+			"Review balenaCloud API keys and revoke the ones no longer needed, "+
+				"with an explicit approval step before any key is revoked."),
+		mcp.WithArgument("fleet",
+			mcp.ArgumentDescription("Optional fleet slug to scope the key review to a fleet's keys. Omit to review your user-level keys.")),
+	), handleRotateApiKeys)
 }
 
 // ----- handlers -----------------------------------------------------------
@@ -185,7 +210,8 @@ const safeReleaseRolloutTemplate = `Guide a SAFE rollout of release %[2]s to fle
 3. Pin the canary: call device-pin with uuid=<canary> and release=%[2]s. This is a state-changing tool — surface the change to the user first, and pass confirm:true if the server requires confirmation.
 4. Verify the canary: call device-info and device-logs on the canary and confirm it downloads, starts, and runs %[2]s cleanly. Re-check if it is still updating.
 5. ONLY if the canary is healthy on %[2]s, roll out fleet-wide: call fleet-pin with fleet=%[1]s and release=%[2]s.
-6. If the canary fails, do NOT proceed. Re-pin the canary to the original release with device-pin, or call device-track-fleet to resume fleet tracking, then report the failure.
+6. If the canary fails, do NOT proceed with the fleet-wide pin. Recover the canary by re-pinning it to the original release with device-pin (or device-track-fleet to resume fleet tracking). If release %[2]s is fundamentally broken, also call release-invalidate with id=%[2]s so it can never auto-deploy to tracking devices (reversible later with release-validate). Then report the failure.
+7. If you have ALREADY rolled out fleet-wide (step 5) and then discover a problem, roll the FLEET back: re-pin it to the original release with fleet-pin, or call fleet-track-latest to resume tracking the latest known-good release. Then report.
 
 Pause for explicit user approval before step 3 and before step 5. Restate the rollback path at every stage.`
 
@@ -215,6 +241,7 @@ const rollbackDeviceTemplate = `Roll back device %[1]s to a previously known-goo
 4. Confirm the rollback target with the user, including its commit and creation date.
 5. Apply the rollback: call device-pin with uuid=%[1]s and release=<target>. This is a state-changing tool — pass confirm:true if the server requires it, only after user approval.
 6. Verify with device-info and device-logs that the device picks up and runs the target release.
+7. If the release you rolled back FROM is itself broken (not merely unwanted on this one device), consider calling release-invalidate with id=<bad release> so it stops auto-deploying to other tracking devices — confirm with the user first, and note it is reversible with release-validate.
 
 Do not apply the pin without explicit user approval of the target release.`
 
@@ -348,6 +375,98 @@ func handleBulkTag(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptR
 		[]mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser,
 				mcp.NewTextContent(fmt.Sprintf(bulkTagTemplate, fleet, key, valueDisplay))),
+		},
+	), nil
+}
+
+const deepDiagnoseDeviceTemplate = `You are running a DEEP health diagnosis of balena device %[1]s — going past cloud metadata to inspect the host OS directly over SSH. Work through these steps with the balenamcp tools, then report.
+
+1. Call device-info with uuid=%[1]s for cloud-side status, IP, supervisor/OS version, and the running/target release. Confirm the device is ONLINE first — device-ssh needs a reachable device, so if it is offline, stop and report that.
+2. Gather host-level metrics with device-ssh. It runs ONE command on the host OS and returns its output; it is annotated destructive (raw shell access), so surface each command and pass confirm:true if the server requires confirmation. Run, in turn, only these read-only inspection commands:
+   - device-ssh uuid=%[1]s command="cat /proc/meminfo | head -n 3" — memory pressure (MemTotal / MemFree / MemAvailable).
+   - device-ssh uuid=%[1]s command="df -h /" — root/data filesystem usage; flag anything near full.
+   - device-ssh uuid=%[1]s command="uptime" — load average and host uptime.
+   - device-ssh uuid=%[1]s command="systemctl --failed --no-legend" — failed host services.
+   - device-ssh uuid=%[1]s command="balena ps -a" — container states; restarting/exited containers signal crash loops.
+3. Call device-logs with device=%[1]s for recent supervisor/service logs, and correlate them with anything the host metrics flagged.
+
+Then summarize:
+- A health verdict (healthy / degraded / critical / offline), citing the specific metric or log line behind it.
+- Resource risks: memory exhaustion, full disk, high load, failed services, or restart loops.
+- Concrete next actions.
+
+Run only the read-only inspection commands above. Do not run mutating shell commands, reboot, restart, or purge without explicit user approval.`
+
+func handleDeepDiagnoseDevice(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	uuid, err := requirePromptArg(req, "uuid", "device UUID")
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewGetPromptResult(
+		fmt.Sprintf("Deep diagnosis plan for device %s", uuid),
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(deepDiagnoseDeviceTemplate, uuid))),
+		},
+	), nil
+}
+
+const prepareLocalDevTemplate = `Set up a balena device for LOCAL development. Local mode enables LAN-based push/SSH but SUSPENDS cloud-managed updates for that device until it is turned back off.
+
+1. Identify the target device. %[1]s
+2. Call device-local-mode-get with uuid=<device> to read the current state. If local mode is already enabled, say so and stop — there is nothing to do.
+3. Explain the trade-off to the user: this device will stop receiving cloud updates until local mode is disabled again. WAIT for explicit user approval.
+4. On approval, call device-local-mode-set with uuid=<device> and enable=true. This is a state-changing tool — pass confirm:true if the server requires it.
+5. Verify with device-local-mode-get that local mode is now enabled, and remind the user they can restore cloud management later with device-local-mode-set enable=false.
+
+Report the final local-mode state and the device's local address for push/SSH.`
+
+func handlePrepareLocalDev(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	// device is optional: when the caller already knows the device we skip the
+	// LAN scan; otherwise the runbook steers them through device-detect.
+	device := req.Params.Arguments["device"]
+	clause := "Run device-detect to scan the LAN for balenaOS devices, and confirm with the user which one to use if several appear."
+	desc := "Prepare a device for local development"
+	if device != "" {
+		clause = fmt.Sprintf("The user named device %s — use it directly (no scan needed).", device)
+		desc = fmt.Sprintf("Prepare device %s for local development", device)
+	}
+	return mcp.NewGetPromptResult(
+		desc,
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(prepareLocalDevTemplate, clause))),
+		},
+	), nil
+}
+
+const rotateApiKeysTemplate = `Review balenaCloud API keys and revoke the ones the user no longer needs, safely.
+
+1. Call api-key-list%[1]s to enumerate API keys (id and name; note created/last-used where shown). %[2]s
+2. Present the keys to the user and ask WHICH to revoke. You may recommend candidates (clearly stale, unnamed, or superseded keys) but never decide unilaterally.
+3. WAIT for explicit user approval naming the exact key IDs to revoke.
+4. On approval, call api-key-revoke with ids=<comma-separated IDs> — a single comma-separated list with no spaces, e.g. "12,34". This is IRREVERSIBLE and destructive: anything authenticating with a revoked key stops working immediately. Pass confirm:true if the server requires it.
+5. Confirm by calling api-key-list again and reporting which keys remain.
+
+Never revoke a key the user has not explicitly named.`
+
+func handleRotateApiKeys(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	// fleet is optional: present scopes the listing to a fleet's keys, absent
+	// reviews the user's own API keys.
+	fleet := req.Params.Arguments["fleet"]
+	scope := ""
+	note := "These are your user-level API keys."
+	desc := "Review and revoke API keys"
+	if fleet != "" {
+		scope = fmt.Sprintf(" with fleet=%s", fleet)
+		note = fmt.Sprintf("These are the API keys scoped to fleet %s.", fleet)
+		desc = fmt.Sprintf("Review and revoke API keys for fleet %s", fleet)
+	}
+	return mcp.NewGetPromptResult(
+		desc,
+		[]mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser,
+				mcp.NewTextContent(fmt.Sprintf(rotateApiKeysTemplate, scope, note))),
 		},
 	), nil
 }
