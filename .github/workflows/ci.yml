@@ -174,7 +174,7 @@ jobs:
           required_prompts=(
             diagnose-device fleet-health-report safe-release-rollout
             rollback-device audit-config compare-releases replicate-config
-            bulk-tag
+            bulk-tag deep-diagnose-device prepare-local-dev rotate-api-keys
           )
           missing_prompts=()
           for p in "${required_prompts[@]}"; do

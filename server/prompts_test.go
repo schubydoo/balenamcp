@@ -78,7 +78,8 @@ func TestPromptHandlers(t *testing.T) {
 			wantInText: []string{
 				"myorg/fl", "def456rel",
 				"fleet-pin", "device-list", "device-pin", "device-info",
-				"device-track-fleet", "confirm:true", "canary",
+				"device-track-fleet", "release-invalidate", "fleet-track-latest",
+				"confirm:true", "canary",
 			},
 		},
 		{
@@ -89,6 +90,7 @@ func TestPromptHandlers(t *testing.T) {
 			wantInText: []string{
 				"dev9uuid",
 				"device-info", "device-pin", "release-list", "device-logs",
+				"release-invalidate",
 			},
 		},
 		{
@@ -140,6 +142,54 @@ func TestPromptHandlers(t *testing.T) {
 				"flagged", "(empty value)", "tag-set",
 			},
 		},
+		{
+			name:     "deep-diagnose-device",
+			handler:  handleDeepDiagnoseDevice,
+			args:     map[string]string{"uuid": "deep9dev"},
+			wantDesc: "deep9dev",
+			wantInText: []string{
+				"deep9dev",
+				"device-info", "device-ssh", "device-logs",
+				"/proc/meminfo", "confirm:true",
+			},
+		},
+		{
+			name:     "prepare-local-dev with device",
+			handler:  handlePrepareLocalDev,
+			args:     map[string]string{"device": "loc4dev"},
+			wantDesc: "loc4dev",
+			wantInText: []string{
+				"loc4dev",
+				"device-local-mode-get", "device-local-mode-set", "enable=true",
+			},
+		},
+		{
+			name:     "prepare-local-dev without device steers to detect",
+			handler:  handlePrepareLocalDev,
+			args:     map[string]string{},
+			wantDesc: "local development",
+			wantInText: []string{
+				"device-detect", "device-local-mode-get", "device-local-mode-set",
+			},
+		},
+		{
+			name:     "rotate-api-keys all keys",
+			handler:  handleRotateApiKeys,
+			args:     map[string]string{},
+			wantDesc: "Review and revoke API keys",
+			wantInText: []string{
+				"api-key-list", "api-key-revoke", "user-level", "confirm:true",
+			},
+		},
+		{
+			name:     "rotate-api-keys scoped to fleet",
+			handler:  handleRotateApiKeys,
+			args:     map[string]string{"fleet": "org/keys"},
+			wantDesc: "org/keys",
+			wantInText: []string{
+				"org/keys", "api-key-list", "api-key-revoke", "fleet=org/keys",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -182,6 +232,7 @@ func TestPromptHandlersMissingArg(t *testing.T) {
 		{"replicate-config no target", handleReplicateConfig, map[string]string{"source": "s"}, "target"},
 		{"bulk-tag no fleet", handleBulkTag, map[string]string{"key": "k"}, "fleet"},
 		{"bulk-tag no key", handleBulkTag, map[string]string{"fleet": "f"}, "key"},
+		{"deep-diagnose-device no uuid", handleDeepDiagnoseDevice, map[string]string{}, "uuid"},
 		// empty-string value is treated as missing, not as a valid identifier.
 		{"diagnose-device empty uuid", handleDiagnoseDevice, map[string]string{"uuid": ""}, "uuid"},
 	}

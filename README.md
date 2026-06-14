@@ -309,12 +309,15 @@ Destructive steps still go through the same `destructiveHint` /
 |---|---|---|
 | `diagnose-device` | `uuid` | Pull status, logs, env, tags, and pin state for one device, then summarize a health verdict and likely root cause. Read-only. |
 | `fleet-health-report` | `fleet` | Tally device status across a fleet, compare each device against the fleet's target release, flag what needs attention. Read-only. |
-| `safe-release-rollout` | `fleet`, `release` | Canary-first rollout: record the rollback target, pin **one** device, verify it, then roll out fleet-wide — pausing for approval before each state change. |
-| `rollback-device` | `uuid` | Identify a previously known-good release and roll a single device back to it, after confirming the target. |
+| `safe-release-rollout` | `fleet`, `release` | Canary-first rollout: record the rollback target, pin **one** device, verify it, then roll out fleet-wide — pausing for approval before each state change. Recovers via re-pin, `release-invalidate`, or `fleet-track-latest`. |
+| `rollback-device` | `uuid` | Identify a previously known-good release and roll a single device back to it, after confirming the target; can `release-invalidate` the bad release. |
 | `audit-config` | `fleet` | Compare device-level env/config variables against fleet defaults; surface drift, secret-shaped values (never echoed), and orphaned overrides. Read-only. |
 | `compare-releases` | `release_a`, `release_b` | Diff two releases: per-service image-size deltas (how much bigger/smaller), composition changes, and asset differences. Read-only. |
 | `replicate-config` | `source`, `target` | Copy env/config variables from one fleet/device to another, with a masked plan and an approval step before any write. |
 | `bulk-tag` | `fleet`, `key`, `value` (optional) | Apply a tag to many devices in a fleet at once, with an approval step before any write. |
+| `deep-diagnose-device` | `uuid` | Host-level diagnosis over `device-ssh`: memory, disk, load, failed services, and container state, then a resource-risk summary. Inspection commands only. |
+| `prepare-local-dev` | `device` (optional) | Enable local mode for LAN development — discovering the device with `device-detect` first if not given — with an approval step. |
+| `rotate-api-keys` | `fleet` (optional) | Review API keys and revoke the stale ones via `api-key-revoke`, with explicit approval before anything is revoked. |
 
 ## Resources
 
