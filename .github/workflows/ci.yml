@@ -123,7 +123,7 @@ jobs:
             release-asset-list tag-list env-list os-versions
             organization-list ssh-key-list api-key-list
             device-reboot device-restart device-shutdown device-purge
-            device-pin device-track-fleet fleet-pin release-finalize
+            device-ssh device-pin device-track-fleet fleet-pin release-finalize
             tag-set tag-rm env-set env-rm
           )
           missing=()
@@ -209,7 +209,7 @@ jobs:
           echo "$resources" | jq '.result.resources | length as $n | "\($n) static resources advertised"'
           required_resources=(
             balena://account balena://account/keys balena://fleets
-            balena://device-types
+            balena://device-types balena://gotchas
           )
           missing_resources=()
           for u in "${required_resources[@]}"; do

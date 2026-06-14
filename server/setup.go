@@ -90,8 +90,24 @@ func loadRequireConfirmFromEnv() bool {
 // In dry-run mode the rendered command is returned verbatim so tests and
 // inspection can verify the argv shape without hitting balenaCloud.
 func executeCommand(ctx context.Context, args []string) (string, error) {
+	return executeCommandStdin(ctx, args, "")
+}
+
+// executeCommandStdin is executeCommand plus an optional stdin payload fed to
+// the subprocess. Most tools build a complete argv and need no stdin (stdin=""
+// behaves exactly like executeCommand). The exception is `device ssh`, whose
+// one-shot command is delivered over stdin rather than argv — this keeps the
+// "never interpolate input into a command line" guarantee (the command never
+// touches argv or a shell) while letting us append the explicit `exit` the
+// remote shell needs to terminate.
+func executeCommandStdin(ctx context.Context, args []string, stdin string) (string, error) {
 	if Config.DryRun {
 		cmdStr := "balena " + strings.Join(args, " ")
+		if stdin != "" {
+			// strconv.Quote collapses the payload (incl. its newline + exit)
+			// onto one line so the rendered command stays greppable.
+			cmdStr += " <<<" + strconv.Quote(stdin)
+		}
 		fmt.Fprintf(os.Stderr, "[DRY RUN] Would execute: %s\n", cmdStr)
 		return fmt.Sprintf("[DRY RUN] %s", cmdStr), nil
 	}
@@ -104,6 +120,9 @@ func executeCommand(ctx context.Context, args []string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "balena", args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	output, err := cmd.CombinedOutput()
 
 	// Distinguish "we ran out of time" from "the CLI itself failed". The
@@ -127,6 +146,16 @@ func executeCommand(ctx context.Context, args []string) (string, error) {
 // error.
 func runCmd(ctx context.Context, args []string) (*mcp.CallToolResult, error) {
 	out, err := executeCommand(ctx, args)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(out), nil
+}
+
+// runCmdStdin is runCmd with an stdin payload — the exit point for tools that
+// feed their input over stdin (currently just device-ssh).
+func runCmdStdin(ctx context.Context, args []string, stdin string) (*mcp.CallToolResult, error) {
+	out, err := executeCommandStdin(ctx, args, stdin)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -667,9 +696,53 @@ func registerReadOnlyAccount(srv *server.MCPServer) {
 // complexity ceiling.
 func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingDeviceLifecycle(srv)
+	registerMutatingExec(srv)
 	registerMutatingPins(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
+}
+
+// registerMutatingExec: device-ssh. Arbitrary remote command execution, so it
+// is treated as destructive (guarded + confirmable) even though many commands
+// a caller runs are read-only — the server can't tell `cat /proc/meminfo` from
+// `rm -rf /data` apart, so it errs on the side of the confirm gate.
+func registerMutatingExec(srv *server.MCPServer) {
+	// device-ssh -----------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-ssh",
+		mcp.WithDescription("Run a single shell command on a device over balena's SSH gateway and return its output. "+
+			"This is a ONE-SHOT runner: the command is delivered over stdin with an automatic `exit`, so it always terminates — it is NOT an interactive shell (for that, run `balena device ssh <uuid>` directly in a terminal). "+
+			"Targets the device host OS by default; pass `service` to run inside a service container. "+
+			"Note: remote service-container exec addressed by UUID is not supported by the balenaCloud backend (host OS works; service containers work only for local/VPN-reachable devices). "+
+			"The command runs verbatim on the device — treat it with the same care as any remote root shell."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID, IP, or .local address.")),
+		mcp.WithString("command", mcp.Required(),
+			mcp.Description("Shell command to run on the device, e.g. \"cat /proc/meminfo\". Runs non-interactively; an `exit` is appended automatically so you do not need to add one.")),
+		mcp.WithString("service", mcp.Description("Service container name to run inside. Omit to run on the host OS. Only works for local/VPN-reachable devices, not remote-by-UUID.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		command := strings.TrimSpace(r.GetString("command", ""))
+		if command == "" {
+			return mcp.NewToolResultError(
+				"device-ssh requires a non-empty 'command' to run on the device"), nil
+		}
+		service, errRes := getIdentifier(r, "service", "service name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		args := []string{"device", "ssh", uuid}
+		if service != "" {
+			args = append(args, service)
+		}
+		// The remote shell does not close on stdin EOF, so a bare piped
+		// command hangs until the exec timeout. Appending an explicit `exit`
+		// makes the session terminate cleanly once the command completes.
+		return runCmdStdin(ctx, args, command+"\nexit\n")
+	})
 }
 
 // registerMutatingDeviceLifecycle: device-reboot, device-restart,

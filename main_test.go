@@ -235,6 +235,26 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"uuid": "7cf02a6"},
 		"balena device track-fleet 7cf02a6")
 
+	// device-ssh: one-shot command over the SSH gateway. The command travels
+	// via stdin (rendered as <<<"...\nexit\n" in dry-run), not argv.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "cat /proc/meminfo"},
+		"balena device ssh 7cf02a6")
+	// service-container target appends the service name as the second arg.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "ls", "service": "main"},
+		"balena device ssh 7cf02a6 main")
+	// the piped payload carries the command plus the auto-appended `exit` that
+	// keeps the remote shell from hanging on stdin EOF.
+	expect(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
+		`<<<"uptime\nexit\n"`)
+	// without a service the second positional arg must NOT appear — guards a
+	// mutation that always-appends the service.
+	expectNot(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
+		"balena device ssh 7cf02a6 uptime")
+
 	// release finalize
 	expect(t, c, ctx, "release-finalize",
 		map[string]any{"id": "123"},
@@ -297,6 +317,7 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"device-purge", map[string]any{"uuid": "7cf02a6"}},
 		{"device-pin", map[string]any{"uuid": "7cf02a6"}},
 		{"device-track-fleet", map[string]any{"uuid": "7cf02a6"}},
+		{"device-ssh", map[string]any{"uuid": "7cf02a6", "command": "ls"}},
 		{"fleet-pin", map[string]any{"fleet": "myorg/myfleet"}},
 		{"release-finalize", map[string]any{"id": "123"}},
 		{"tag-set", map[string]any{"key": "owner", "fleet": "my-fleet"}},
@@ -318,6 +339,15 @@ func TestErrors(t *testing.T) {
 	expectError(t, c, ctx, "device-info", nil, "uuid")
 	expectError(t, c, ctx, "release-info", nil, "id")
 	expectError(t, c, ctx, "device-reboot", nil, "uuid")
+
+	// device-ssh: uuid present but command empty/missing is a handler error,
+	// and a flag-shaped uuid is rejected like any other identifier.
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6"}, "command")
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "   "}, "command")
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "--help", "command": "ls"}, "cannot start with '-'")
 
 	// tag-list / tag-set / tag-rm — exactly-one-of fleet|device|release
 	expectError(t, c, ctx, "tag-list", nil, "one of")

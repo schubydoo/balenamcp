@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **12 of the 29 tools change state on real devices or in balenaCloud.** A
+> **13 of the 30 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -235,6 +235,7 @@ nothing balenamcp-specific about the wiring.
 > | `device-restart` | Restart containers (no reboot) | yes |
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** | **no — data is gone** |
+> | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
 > | `device-track-fleet` | Drop a device's pin and resume tracking the fleet's release | yes (`device-pin` again) |
 > | `fleet-pin` | Pin a fleet to a specific release | yes |
@@ -316,6 +317,7 @@ an `"errors"` object with `"partial": true`.
 |---|---|---|
 | `balena://account` | static | `whoami` + organizations |
 | `balena://account/keys` | static | registered SSH public keys + API key names (no secrets) |
+| `balena://gotchas` | static | known balena CLI foot-guns + correct invocations (SSH one-shot, log streaming limits) |
 | `balena://fleets` | static | all accessible fleets |
 | `balena://device-types` | static | supported device types |
 | `balena://device/{uuid}` | template | device status + recent logs + env/config + tags |

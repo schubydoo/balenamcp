@@ -384,3 +384,33 @@ func TestResourceHandlersDryRun(t *testing.T) {
 		})
 	}
 }
+
+// TestGotchasResource asserts the static gotchas doc is served as markdown and
+// carries the high-value guidance an agent needs (the SSH subcommand, the
+// auto-exit one-shot pattern, and the no-tail-streaming rule). This is the
+// content that stops agents from rabbit-holing on the raw CLI, so its presence
+// is worth pinning.
+func TestGotchasResource(t *testing.T) {
+	cs, err := handleGotchasResource(context.Background(), readReq("balena://gotchas"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cs) != 1 {
+		t.Fatalf("want 1 content item, got %d", len(cs))
+	}
+	rc, ok := cs[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("content is not TextResourceContents: %T", cs[0])
+	}
+	if rc.URI != "balena://gotchas" {
+		t.Errorf("uri = %q, want balena://gotchas", rc.URI)
+	}
+	if rc.MIMEType != "text/markdown" {
+		t.Errorf("mime = %q, want text/markdown", rc.MIMEType)
+	}
+	for _, want := range []string{"balena device ssh", "exit", "device-ssh", "--tail"} {
+		if !strings.Contains(rc.Text, want) {
+			t.Errorf("gotchas doc missing %q\n%s", want, rc.Text)
+		}
+	}
+}
