@@ -89,6 +89,12 @@ func loadRequireConfirmFromEnv() bool {
 //
 // In dry-run mode the rendered command is returned verbatim so tests and
 // inspection can verify the argv shape without hitting balenaCloud.
+// execBinary is the CLI executable invoked for every tool. It is a package
+// variable solely so tests can point the real-exec path at a stand-in (e.g.
+// `cat`, which echoes stdin) to verify stdin wiring without a `balena` install.
+// Production never changes it.
+var execBinary = "balena"
+
 func executeCommand(ctx context.Context, args []string) (string, error) {
 	return executeCommandStdin(ctx, args, "")
 }
@@ -119,7 +125,7 @@ func executeCommandStdin(ctx context.Context, args []string, stdin string) (stri
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "balena", args...)
+	cmd := exec.CommandContext(ctx, execBinary, args...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

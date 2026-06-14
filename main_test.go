@@ -446,6 +446,20 @@ func TestErrors(t *testing.T) {
 		map[string]any{"fleet": "--help"}, "cannot start with '-'")
 	expectError(t, c, ctx, "api-key-revoke",
 		map[string]any{"ids": "-1"}, "cannot start with '-'")
+	// optional/second identifiers on new tools must also be flag-shape guarded
+	// (these are the branches that survive mutation when only the first guard
+	// is tested).
+	expectError(t, c, ctx, "device-ssh",
+		map[string]any{"uuid": "7cf02a6", "command": "ls", "service": "-foo"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "organization-rename",
+		map[string]any{"handle": "acme", "new_name": "-foo"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-local-mode-get",
+		map[string]any{"uuid": "--help"}, "cannot start with '-'")
+	// env-rename: missing numeric id hits the RequireInt error branch.
+	expectError(t, c, ctx, "env-rename",
+		map[string]any{"value": "x"}, "id")
 
 	// tag-list / tag-set / tag-rm — exactly-one-of fleet|device|release
 	expectError(t, c, ctx, "tag-list", nil, "one of")
