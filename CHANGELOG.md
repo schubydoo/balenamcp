@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/schubydoo/balenamcp/compare/v1.1.0...v1.2.0) (2026-06-14)
+
+
+### Features
+
+* add 15 balena tools (ssh, fleet/release/org lifecycle, diagnostics) + gotchas resource ([#30](https://github.com/schubydoo/balenamcp/issues/30)) ([6613581](https://github.com/schubydoo/balenamcp/commit/6613581db456dc13a450d02d0a5cbbde7bb2c802))
+
 ## [1.1.0](https://github.com/schubydoo/balenamcp/compare/v1.0.1...v1.1.0) (2026-05-29)
 
 
