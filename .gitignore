@@ -46,5 +46,7 @@ Thumbs.db
 .env
 .env.local
 
-# Local-only agent notes (not part of the public repo)
+# Local-only agent notes and tooling (not part of the public repo)
 AGENTS.md
+CLAUDE.md
+.claude/
