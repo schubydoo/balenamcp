@@ -73,6 +73,16 @@
       "semanticCommitType": "chore",
       "semanticCommitScope": "ci",
       "addLabels": ["github-actions", "ci"]
+    },
+    {
+      "description": "balena CLI drift watcher — surface each new balena-cli release as its OWN PR (never grouped) so it can be reviewed for parameter drift before merging. chore(deps) so it never triggers a release-please version bump; this only moves the tracking marker in .balena-cli-version.",
+      "matchPackageNames": ["balena-cli"],
+      "matchManagers": ["custom.regex"],
+      "commitMessagePrefix": "chore(deps):",
+      "commitMessageTopic": "balena CLI",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps",
+      "addLabels": ["balena-cli"]
     }
   ],
   "customManagers": [
@@ -88,6 +98,19 @@
       "depNameTemplate": "go-gremlins/gremlins",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track BALENA_CLI_VERSION in .balena-cli-version. balena-cli is shelled out at runtime, so it is invisible to the gomod and github-actions managers; this regex picks the literal `BALENA_CLI_VERSION=X.Y.Z` line and Renovate cross-references it against the balena-cli npm package, opening a PR (with the upstream changelog) on each new release to review for parameter drift.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.balena-cli-version$/"
+      ],
+      "matchStrings": [
+        "BALENA_CLI_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "balena-cli",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
     }
   ]
 }

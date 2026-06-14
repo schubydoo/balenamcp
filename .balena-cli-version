@@ -1,0 +1,14 @@
+# Tracking marker — NOT used at build or runtime.
+#
+# This records the balena CLI version that balenamcp's wrapped command surface
+# (the argv every tool constructs) has been verified against. balena-cli is
+# shelled out at runtime, so it is neither a go.mod dependency nor a GitHub
+# Action `uses:` line — only a Renovate customManager (see renovate.json) sees
+# this line. Renovate opens a `chore(deps)` PR whenever balena-cli publishes a
+# newer npm release; its PR body carries the upstream changelog.
+#
+# Review each such PR for parameter drift — renamed/removed subcommands or
+# flags in the commands we wrap — using the balena-cli-parity agent, and merge
+# it only once the new version is confirmed clean. Merging is the record that
+# the new CLI has been reviewed.
+BALENA_CLI_VERSION=25.1.7
