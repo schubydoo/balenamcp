@@ -365,6 +365,7 @@ func registerReadOnlyTools(srv *server.MCPServer) {
 	registerReadOnlyReleases(srv)
 	registerReadOnlyTagsEnvs(srv)
 	registerReadOnlyAccount(srv)
+	registerReadOnlyDiagnostics(srv)
 }
 
 // registerReadOnlyIdentity: version, whoami.
@@ -698,8 +699,11 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingDeviceLifecycle(srv)
 	registerMutatingExec(srv)
 	registerMutatingPins(srv)
+	registerMutatingFleetLifecycle(srv)
+	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
+	registerMutatingKeys(srv)
 }
 
 // registerMutatingExec: device-ssh. Arbitrary remote command execution, so it
@@ -816,6 +820,30 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 		}
 		return runCmd(ctx, []string{"device", "purge", uuid})
 	})
+
+	// device-local-mode-set ------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-local-mode-set",
+		mcp.WithDescription("Enable or disable local mode on a development device. Local mode permits local (LAN) push/SSH but suspends cloud-managed updates. Read the current state with device-local-mode-get."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID.")),
+		mcp.WithBoolean("enable", mcp.Required(),
+			mcp.Description("true to enable local mode, false to disable it.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		enable, err := r.RequireBool("enable")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		// --enable / --disable are mutually exclusive; pick exactly one.
+		flag := "--disable"
+		if enable {
+			flag = "--enable"
+		}
+		return runCmd(ctx, []string{"device", "local-mode", uuid, flag})
+	})
 }
 
 // registerMutatingPins: device-pin, device-track-fleet, fleet-pin,
@@ -897,6 +925,34 @@ func registerMutatingPins(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		return runCmd(ctx, []string{"release", "finalize", id})
+	})
+
+	// release-invalidate ---------------------------------------------------
+	srv.AddTool(mcp.NewTool("release-invalidate",
+		mcp.WithDescription("Mark a release invalid so it is never auto-deployed to tracking devices. Reversible with release-validate."),
+		destructive,
+		mcp.WithString("id", mcp.Required(),
+			mcp.Description("Release commit or numeric release ID to invalidate.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, errRes := guardDestructive(r, "id", "release commit or ID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"release", "invalidate", id})
+	})
+
+	// release-validate -----------------------------------------------------
+	srv.AddTool(mcp.NewTool("release-validate",
+		mcp.WithDescription("Re-validate a previously invalidated release so it can deploy again. Inverse of release-invalidate."),
+		destructive,
+		mcp.WithString("id", mcp.Required(),
+			mcp.Description("Release commit or numeric release ID to validate.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, errRes := guardDestructive(r, "id", "release commit or ID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"release", "validate", id})
 	})
 }
 
@@ -1027,5 +1083,204 @@ func registerMutatingEnvs(srv *server.MCPServer) {
 		args = appendBoolFlag(args, r, "config", "--config")
 		args = appendBoolFlag(args, r, "yes", "--yes")
 		return runCmd(ctx, args)
+	})
+
+	// env-rename -----------------------------------------------------------
+	// Despite the balena CLI name, `env rename` changes a variable's VALUE
+	// (selected by numeric DB ID), not its name. Use --device/--service/--config
+	// booleans to disambiguate the variable type, exactly as env-rm does.
+	srv.AddTool(mcp.NewTool("env-rename",
+		mcp.WithDescription("Change the VALUE of an existing env or config variable by its numeric database ID (see env-list). Note: despite the balena CLI command name, this updates the value, not the variable name. Use --device/--service/--config booleans to disambiguate the variable type; --config and --service are mutually exclusive."),
+		destructive,
+		mcp.WithNumber("id", mcp.Required(),
+			mcp.Description("Numeric database ID of the variable (from env-list).")),
+		mcp.WithString("value", mcp.Required(), mcp.Description("New value for the variable.")),
+		mcp.WithBoolean("device", mcp.Description("The variable is a device-scoped variable.")),
+		mcp.WithBoolean("service", mcp.Description("The variable is a service-scoped variable.")),
+		mcp.WithBoolean("config", mcp.Description("The variable is a config variable.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		// id is a numeric DB ID — no flag-shape risk.
+		id, err := r.RequireInt("id")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		// value is free-form (may be any string); require it present but do not
+		// flag-shape-guard it. An empty value would produce an empty positional.
+		value := r.GetString("value", "")
+		if value == "" {
+			return mcp.NewToolResultError("env-rename requires a non-empty 'value'"), nil
+		}
+		if r.GetBool("config", false) && r.GetBool("service", false) {
+			return mcp.NewToolResultError(
+				"env-rename: 'config' and 'service' are mutually exclusive"), nil
+		}
+		args := []string{"env", "rename", fmt.Sprintf("%d", id), value}
+		args = appendBoolFlag(args, r, "device", "--device")
+		args = appendBoolFlag(args, r, "service", "--service")
+		args = appendBoolFlag(args, r, "config", "--config")
+		return runCmd(ctx, args)
+	})
+}
+
+// registerMutatingFleetLifecycle: fleet-track-latest, fleet-purge,
+// fleet-restart, fleet-rm. These act on EVERY device in the fleet. Note that
+// the balena CLI runs fleet-purge and fleet-restart immediately with no --yes
+// flag and no interactive prompt, so the only confirmation layer for them is
+// guardDestructive here; fleet-rm does take --yes, which we always pass.
+func registerMutatingFleetLifecycle(srv *server.MCPServer) {
+	// fleet-track-latest ---------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-track-latest",
+		mcp.WithDescription("Drop a fleet's release pin so it resumes tracking the latest final release. Fleet-level inverse of fleet-pin."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet name or slug.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "track-latest", fleet})
+	})
+
+	// fleet-purge ----------------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-purge",
+		mcp.WithDescription("Clear the /data directory on EVERY device in a fleet. Persistent app data is lost fleet-wide and cannot be recovered."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet name or slug.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "purge", fleet})
+	})
+
+	// fleet-restart --------------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-restart",
+		mcp.WithDescription("Restart all service containers on EVERY device in a fleet (does not reboot the devices)."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet name or slug.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "restart", fleet})
+	})
+
+	// fleet-rm -------------------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-rm",
+		mcp.WithDescription("Permanently delete a fleet. Irreversible. --yes is always passed to bypass the CLI's interactive confirmation."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(), mcp.Description("Fleet name or slug to delete.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
+	})
+}
+
+// registerMutatingOrgs: organization-create, organization-rename,
+// organization-rm.
+func registerMutatingOrgs(srv *server.MCPServer) {
+	// organization-create --------------------------------------------------
+	srv.AddTool(mcp.NewTool("organization-create",
+		mcp.WithDescription("Create a new organization. The argument is the display name; balenaCloud auto-generates the handle/slug (it cannot be set at creation time)."),
+		destructive,
+		mcp.WithString("name", mcp.Required(), mcp.Description("Display name for the new organization.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, errRes := guardDestructive(r, "name", "organization name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"organization", "create", name})
+	})
+
+	// organization-rename --------------------------------------------------
+	srv.AddTool(mcp.NewTool("organization-rename",
+		mcp.WithDescription("Rename an organization. Requires the current handle/slug and the new display name. The new name must be provided (the CLI would otherwise block on an interactive prompt)."),
+		destructive,
+		mcp.WithString("handle", mcp.Required(), mcp.Description("Current organization handle/slug.")),
+		mcp.WithString("new_name", mcp.Required(), mcp.Description("New display name for the organization.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handle, errRes := guardDestructive(r, "handle", "organization handle")
+		if errRes != nil {
+			return errRes, nil
+		}
+		newName, errRes := requireIdentifier(r, "new_name", "new organization name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"organization", "rename", handle, newName})
+	})
+
+	// organization-rm ------------------------------------------------------
+	srv.AddTool(mcp.NewTool("organization-rm",
+		mcp.WithDescription("Permanently delete an organization by its handle/slug. Irreversible. --yes is always passed to bypass the interactive confirmation."),
+		destructive,
+		mcp.WithString("handle", mcp.Required(), mcp.Description("Organization handle/slug to delete.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handle, errRes := guardDestructive(r, "handle", "organization handle")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"organization", "rm", handle, "--yes"})
+	})
+}
+
+// registerMutatingKeys: api-key-revoke.
+func registerMutatingKeys(srv *server.MCPServer) {
+	// api-key-revoke -------------------------------------------------------
+	srv.AddTool(mcp.NewTool("api-key-revoke",
+		mcp.WithDescription("Revoke one or more balenaCloud API keys by numeric ID. Pass a single ID or a comma-separated list with no spaces, e.g. \"123,456\" (IDs come from api-key-list). Irreversible."),
+		destructive,
+		mcp.WithString("ids", mcp.Required(),
+			mcp.Description("Numeric API key ID, or a comma-separated list of IDs (no spaces), e.g. \"123,456\".")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// The CLI takes a single positional that is itself a comma-separated
+		// list, so the whole thing is one argv element — never split it.
+		ids, errRes := guardDestructive(r, "ids", "API key ID(s)")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"api-key", "revoke", ids})
+	})
+}
+
+// registerReadOnlyDiagnostics: device-detect, device-local-mode-get. Read-only
+// device discovery/inspection that doesn't fit the fleet/release/tag families.
+func registerReadOnlyDiagnostics(srv *server.MCPServer) {
+	// device-detect --------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-detect",
+		mcp.WithDescription("Scan the local network (LAN) for balenaOS devices and report what is found. Read-only. Devices running production OS images expose less detail than development images."),
+		readOnly,
+		mcp.WithBoolean("json", mcp.Description("Output as JSON.")),
+		mcp.WithNumber("timeout", mcp.Description("Scan timeout in seconds.")),
+		mcp.WithBoolean("verbose", mcp.Description("Include extra detail in the scan output.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := []string{"device", "detect"}
+		if v := r.GetInt("timeout", -1); v >= 0 {
+			args = append(args, "--timeout", fmt.Sprintf("%d", v))
+		}
+		args = appendBoolFlag(args, r, "verbose", "--verbose")
+		args = appendBoolFlag(args, r, "json", "--json")
+		return runCmd(ctx, args)
+	})
+
+	// device-local-mode-get ------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-local-mode-get",
+		mcp.WithDescription("Report whether local mode is enabled on a device. Read-only. Change it with device-local-mode-set."),
+		readOnly,
+		mcp.WithString("uuid", mcp.Required(), mcp.Description("Device UUID.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "local-mode", uuid, "--status"})
 	})
 }

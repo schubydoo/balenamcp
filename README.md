@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **13 of the 30 tools change state on real devices or in balenaCloud.** A
+> **25 of the 44 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -236,14 +236,26 @@ nothing balenamcp-specific about the wiring.
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** | **no — data is gone** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
+> | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
 > | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
 > | `device-track-fleet` | Drop a device's pin and resume tracking the fleet's release | yes (`device-pin` again) |
-> | `fleet-pin` | Pin a fleet to a specific release | yes |
+> | `fleet-pin` | Pin a fleet to a specific release | yes (`fleet-track-latest` or re-pin) |
+> | `fleet-track-latest` | Drop a fleet's pin and resume tracking the latest release | yes (`fleet-pin` again) |
+> | `fleet-restart` | Restart containers on **every device** in a fleet | yes |
+> | `fleet-purge` | **Wipe `/data` on every device** in a fleet | **no — data is gone** |
+> | `fleet-rm` | **Delete a fleet** (passes `--yes`) | **no** |
 > | `release-finalize` | Promote a draft release to final | **no — finals can't be un-finalized** |
+> | `release-invalidate` | Mark a release invalid so it won't auto-deploy | yes (`release-validate`) |
+> | `release-validate` | Re-validate a previously invalidated release | yes (`release-invalidate`) |
 > | `tag-set` | Create or update a tag | yes (`tag-rm`) |
 > | `tag-rm` | Remove a tag | yes (`tag-set`) |
 > | `env-set` | Set/update an env or config variable | yes (`env-rm` or `env-set` again) |
 > | `env-rm` | Delete an env or config variable (needs `yes: true` to bypass the CLI's confirm prompt) | yes (`env-set` again) |
+> | `env-rename` | Change an existing variable's **value** by numeric ID (despite the name) | yes (set it back) |
+> | `organization-create` | Create a new organization | yes (`organization-rm`) |
+> | `organization-rename` | Rename an organization | yes (rename again) |
+> | `organization-rm` | **Delete an organization** (passes `--yes`) | **no** |
+> | `api-key-revoke` | **Revoke API key(s)** by ID | **no** |
 >
 > **Belt-and-suspenders gate:** set `BALENAMCP_REQUIRE_CONFIRM=1` and every
 > destructive tool will refuse to run unless the call carries
@@ -252,7 +264,7 @@ nothing balenamcp-specific about the wiring.
 
 ### Read-only
 
-The remaining 17 tools are read-only — they shell out to balena with no
+The remaining 19 tools are read-only — they shell out to balena with no
 state change. Safe to call without confirmation.
 
 | Tool | Purpose |
@@ -274,6 +286,8 @@ state change. Safe to call without confirmation.
 | `organization-list` | Organizations the user belongs to |
 | `ssh-key-list` | SSH keys registered in balenaCloud |
 | `api-key-list` | balenaCloud API keys |
+| `device-detect` | Scan the local network (LAN) for balenaOS devices |
+| `device-local-mode-get` | Report whether local mode is enabled on a device |
 
 ### Argument constraints
 

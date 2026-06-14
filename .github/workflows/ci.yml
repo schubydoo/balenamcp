@@ -122,9 +122,13 @@ jobs:
             device-logs device-type-list release-list release-info
             release-asset-list tag-list env-list os-versions
             organization-list ssh-key-list api-key-list
+            device-detect device-local-mode-get
             device-reboot device-restart device-shutdown device-purge
             device-ssh device-pin device-track-fleet fleet-pin release-finalize
-            tag-set tag-rm env-set env-rm
+            tag-set tag-rm env-set env-rm env-rename
+            device-local-mode-set release-invalidate release-validate
+            fleet-track-latest fleet-purge fleet-restart fleet-rm
+            organization-create organization-rename organization-rm api-key-revoke
           )
           missing=()
           for t in "${required[@]}"; do
