@@ -11,4 +11,4 @@
 # flags in the commands we wrap — using the balena-cli-parity agent, and merge
 # it only once the new version is confirmed clean. Merging is the record that
 # the new CLI has been reviewed.
-BALENA_CLI_VERSION=25.1.9
+BALENA_CLI_VERSION=25.1.10
