@@ -167,7 +167,7 @@ jobs:
         # zizmor is a Python tool; uv is the fastest cross-platform way to
         # install it. Matches the dump1090-exporter pattern even though this
         # repo is Go — keeps zizmor invocation identical across projects.
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           # Disable uv's wheel cache. setup-uv tries to hash Python
           # dependency files (requirements*.txt, pyproject.toml, uv.lock,
