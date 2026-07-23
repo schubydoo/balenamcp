@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/schubydoo/balenamcp/compare/v1.2.0...v1.2.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/mark3labs/mcp-go to v0.57.0 ([#47](https://github.com/schubydoo/balenamcp/issues/47)) ([d36ad56](https://github.com/schubydoo/balenamcp/commit/d36ad568eacd12736f87a41fb27ccff7f0200d71))
+
 ## [1.2.0](https://github.com/schubydoo/balenamcp/compare/v1.1.0...v1.2.0) (2026-06-14)
 
 
