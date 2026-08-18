@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/schubydoo/balenamcp/compare/v1.2.1...v1.2.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* **deps:** update gomod (non-major) ([#64](https://github.com/schubydoo/balenamcp/issues/64)) ([208f509](https://github.com/schubydoo/balenamcp/commit/208f5098ee6682360fd2280f744f2e3f6b729805))
+* **deps:** update module github.com/stretchr/testify to v1.12.0 ([#70](https://github.com/schubydoo/balenamcp/issues/70)) ([897d168](https://github.com/schubydoo/balenamcp/commit/897d1684b7ea006972ddf30fe63a5303dbf07f73))
+
 ## [1.2.1](https://github.com/schubydoo/balenamcp/compare/v1.2.0...v1.2.1) (2026-07-23)
 
 
