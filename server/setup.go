@@ -778,6 +778,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingFleetCreation(srv)
 	registerMutatingServices(srv)
 	registerMutatingDeviceIdentity(srv)
+	registerMutatingDeviceEstate(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1296,6 +1297,114 @@ func registerMutatingFleetLifecycle(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
+	})
+}
+
+// registerMutatingDeviceEstate: device-rm, device-deactivate, device-move,
+// device-register. Membership and existence of a device within balenaCloud,
+// as opposed to what a device is doing.
+//
+// device rm and device deactivate both prompt for confirmation unless --yes is
+// passed, and --yes must be passed or the call hangs — so guardDestructive is
+// the only safety gate on the most irreversible operations in the surface.
+// device move prompts for the target fleet when --fleet is omitted, so that
+// argument is required here.
+func registerMutatingDeviceEstate(srv *server.MCPServer) {
+	// device-rm ------------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-rm",
+		mcp.WithDescription("Permanently remove a device from balenaCloud. Irreversible: the device and its history are gone, and the hardware must be re-provisioned to come back. One device per call — comma-separated lists are rejected. --yes is always passed to bypass the CLI's interactive confirmation."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID to remove. One device per call; comma-separated lists are rejected.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "rm", uuid, "--yes"})
+	})
+
+	// device-deactivate ----------------------------------------------------
+	//
+	// Unlike rm and move, the CLI resolves a single UUID here and never splits
+	// on "," — the guard is applied anyway so a list produces a clear error
+	// rather than an unresolvable-UUID failure from the backend.
+	srv.AddTool(mcp.NewTool("device-deactivate",
+		mcp.WithDescription("Deactivate a device, releasing it from its fleet while keeping it in the account. BILLING: balena charges a fee equivalent to one month's normal cost for the device, and it is not charged again until it comes back online. --yes is always passed to bypass the CLI's interactive confirmation."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID to deactivate. One device per call.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "deactivate", uuid, "--yes"})
+	})
+
+	// device-move ----------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-move",
+		mcp.WithDescription("Move a device to another fleet. The target fleet is required (the CLI would otherwise block on an interactive prompt) and must accept the device's device type. Reversible by moving it back. One device per call — comma-separated lists are rejected."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID to move. One device per call; comma-separated lists are rejected.")),
+		mcp.WithString("fleet", mcp.Required(),
+			mcp.Description("Target fleet name or org/fleet slug, as listed by fleet-list.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		fleet, errRes := requireIdentifier(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "move", uuid, "--fleet", fleet})
+	})
+
+	// device-register ------------------------------------------------------
+	//
+	// Note --deviceType is camelCase, unlike almost every other flag in the
+	// CLI. The MCP argument is device_type, matching our snake_case convention.
+	srv.AddTool(mcp.NewTool("device-register",
+		mcp.WithDescription("Register a new device with a fleet, reserving a UUID before the hardware is provisioned. Additive rather than destructive, but it does change fleet membership. Omit uuid to have balenaCloud assign one."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(),
+			mcp.Description("Fleet name or org/fleet slug to register the device into.")),
+		mcp.WithString("uuid",
+			mcp.Description("Custom device UUID. Omit to have balenaCloud generate one.")),
+		mcp.WithString("device_type",
+			mcp.Description("Device type slug (e.g. 'raspberrypi4-64'), as listed by device-type-list. Defaults to the fleet's device type.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := getIdentifier(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		deviceType, errRes := getIdentifier(r, "device_type", "device type")
+		if errRes != nil {
+			return errRes, nil
+		}
+		args := []string{"device", "register", fleet}
+		if uuid != "" {
+			args = append(args, "--uuid", uuid)
+		}
+		if deviceType != "" {
+			args = append(args, "--deviceType", deviceType)
+		}
+		return runCmd(ctx, args)
 	})
 }
 
