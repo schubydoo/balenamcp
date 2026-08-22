@@ -31,6 +31,34 @@
 // The release-finalize sub-test always runs — it exercises only the error
 // branch (against a bogus commit) since intentionally producing a draft
 // release from inside this test is out of scope.
+//
+// Additional optional env vars for the newer tools (sub-tests skip without):
+//
+//	BALENA_LIVE_SERVICE             a service name on the device (stop/start round trip)
+//	BALENA_LIVE_SSH_KEY_ID          numeric ssh key id (ssh-key-info read)
+//	BALENA_LIVE_SSH_PUBKEY          literal public key TEXT to add+remove (ssh-key round trip)
+//	BALENA_LIVE_ALLOW_REGISTER=1    enable device-register + device-rm of the phantom device
+//	BALENA_LIVE_ALLOW_FLEET_CREATE=1 enable fleet-create + fleet-rename + fleet-rm round trip
+//	BALENA_LIVE_ALLOW_ASSET=1       enable release-asset upload/download/delete round trip
+//	                                (mutates BALENA_LIVE_RELEASE's asset set)
+//
+// Deliberately not live-tested, with reasons — this list is a decision, not
+// an accident:
+//
+//	device-os-update       queues a host OS update; takeover targets erase the
+//	                       device. No safe round trip exists.
+//	device-move            requires a second fleet accepting the device type;
+//	                       moving the only live test device mid-sweep breaks
+//	                       every later sub-test.
+//	device-deactivate      charges a fee on paid plans and needs the device to
+//	                       come back online to re-register.
+//	device-public-url-set  --enable exposes the device to the public internet;
+//	                       the read side (device-public-url) is covered.
+//	fleet-purge/restart/track-latest, org create/rename/rm, api-key-revoke,
+//	release-invalidate/validate, env-rename
+//	                       fleet-/org-/account-wide blast radius on shared
+//	                       infrastructure; the dry-run argv tests plus the
+//	                       upstream parity audit cover their construction.
 
 package main
 
@@ -178,6 +206,31 @@ func TestLiveSweep(t *testing.T) {
 		mustOK(t, c, ctx, "organization-list", nil)
 		mustOK(t, c, ctx, "ssh-key-list", nil)
 		mustOK(t, c, ctx, "api-key-list", nil)
+		// Newer read-only device tools.
+		mustOK(t, c, ctx, "device-local-mode-get", map[string]any{"uuid": device})
+		mustOK(t, c, ctx, "device-public-url", map[string]any{"uuid": device})
+		mustOK(t, c, ctx, "device-public-url", map[string]any{"uuid": device, "status": true})
+		// LAN scan runs on THIS host; an empty result is fine, a non-zero
+		// exit is not. Short timeout keeps the sweep fast.
+		mustOK(t, c, ctx, "device-detect", map[string]any{"timeout": float64(5)})
+		if id := os.Getenv("BALENA_LIVE_SSH_KEY_ID"); id != "" {
+			var f float64
+			_, err := fmt.Sscanf(id, "%f", &f)
+			require.NoError(t, err, "BALENA_LIVE_SSH_KEY_ID must be numeric")
+			mustOK(t, c, ctx, "ssh-key-info", map[string]any{"id": f})
+		} else {
+			t.Log("BALENA_LIVE_SSH_KEY_ID not set — skipping ssh-key-info")
+		}
+	})
+
+	t.Run("Identify", func(t *testing.T) {
+		// Blinks the ACT LED. Read-only-annotated and harmless, but it needs
+		// the device online; accept the CLI's explicit not-online error as a
+		// pass so a sweep against a rebooting device doesn't flap.
+		text, isErr := callRaw(t, c, ctx, "device-identify", map[string]any{"uuid": device})
+		if isErr && !strings.Contains(text, "not online") {
+			t.Fatalf("device-identify failed for a reason other than offline: %s", truncate(text, 300))
+		}
 	})
 
 	// ----- destructive: reversible ----------------------------------------
@@ -206,7 +259,7 @@ func TestLiveSweep(t *testing.T) {
 		// grepping is simpler and doesn't bind this test to JSON shape.
 		idText := findEnvID(t, device, name)
 		mustOK(t, c, ctx, "env-rm", map[string]any{
-			"id": idText, "device": true, "yes": true,
+			"id": idText, "device": true,
 		})
 	})
 
@@ -226,6 +279,136 @@ func TestLiveSweep(t *testing.T) {
 		mustOK(t, c, ctx, "device-track-fleet", map[string]any{"uuid": device})
 		// fleet-pin query mode — read current fleet pin without changing it.
 		mustOK(t, c, ctx, "fleet-pin", map[string]any{"fleet": fleet})
+	})
+
+	t.Run("RenameRoundTrip", func(t *testing.T) {
+		// Rename to a marker name and back. The original name comes from the
+		// device JSON so the round trip restores exactly what was there.
+		orig := deviceJSONField(t, device, "device_name")
+		if orig == "" {
+			t.Skip("could not read current device name from device JSON")
+		}
+		tmp := "livetest-rename-" + time.Now().UTC().Format("150405")
+		mustOK(t, c, ctx, "device-rename", map[string]any{"uuid": device, "new_name": tmp})
+		mustOK(t, c, ctx, "device-rename", map[string]any{"uuid": device, "new_name": orig})
+	})
+
+	t.Run("NoteRoundTrip", func(t *testing.T) {
+		// device-note REPLACES the existing note, so capture and restore it.
+		// An empty prior note cannot be restored through the tool (empty text
+		// is rejected by design), so skip rather than clobber silently.
+		orig := deviceJSONField(t, device, "note")
+		if orig == "" {
+			t.Skip("device has no note to restore afterwards; skipping rather than leaving a livetest marker behind")
+		}
+		mustOK(t, c, ctx, "device-note", map[string]any{
+			"uuid": device, "note": "livetest marker " + time.Now().UTC().Format(time.RFC3339),
+		})
+		out := mustOK(t, c, ctx, "device-info", map[string]any{"uuid": device, "json": true})
+		require.Contains(t, out, "livetest marker", "note did not surface in device-info")
+		mustOK(t, c, ctx, "device-note", map[string]any{"uuid": device, "note": orig})
+	})
+
+	t.Run("LocalModeIdempotent", func(t *testing.T) {
+		// Read the current state and set it to the same value: exercises the
+		// real cloud round trip of device-local-mode-set without changing
+		// anything. The get tool prints the CLI's status line.
+		out := mustOK(t, c, ctx, "device-local-mode-get", map[string]any{"uuid": device})
+		enabled := strings.Contains(strings.ToLower(out), "enabled") &&
+			!strings.Contains(strings.ToLower(out), "disabled")
+		mustOK(t, c, ctx, "device-local-mode-set", map[string]any{"uuid": device, "enable": enabled})
+	})
+
+	t.Run("ServiceStopStart", func(t *testing.T) {
+		service := os.Getenv("BALENA_LIVE_SERVICE")
+		if service == "" {
+			t.Skip("set BALENA_LIVE_SERVICE to a service name on the device")
+		}
+		// Stop, then start — the container is down for the gap between the
+		// two calls. Start is the restorative half, so run it even if the
+		// assertion on stop's output were to fail later.
+		mustOK(t, c, ctx, "device-stop-service", map[string]any{"uuid": device, "service": service})
+		mustOK(t, c, ctx, "device-start-service", map[string]any{"uuid": device, "service": service})
+	})
+
+	t.Run("RegisterRoundTrip", func(t *testing.T) {
+		if os.Getenv("BALENA_LIVE_ALLOW_REGISTER") != "1" {
+			t.Skip("set BALENA_LIVE_ALLOW_REGISTER=1 to enable; registers then removes a phantom device")
+		}
+		// Register a phantom device (no hardware behind it), then remove it —
+		// the only full lifecycle in the surface that is safe to round-trip.
+		out := mustOK(t, c, ctx, "device-register", map[string]any{"fleet": fleet})
+		uuid := lastField(out)
+		require.NotEmpty(t, uuid, "device-register output carried no uuid: %s", truncate(out, 200))
+		mustOK(t, c, ctx, "device-rm", map[string]any{"uuid": uuid})
+	})
+
+	t.Run("FleetCreateRenameRm", func(t *testing.T) {
+		if os.Getenv("BALENA_LIVE_ALLOW_FLEET_CREATE") != "1" {
+			t.Skip("set BALENA_LIVE_ALLOW_FLEET_CREATE=1 to enable; creates, renames and deletes a throwaway fleet")
+		}
+		org, _, ok := strings.Cut(fleet, "/")
+		require.True(t, ok, "BALENA_LIVE_FLEET must be org/fleet to derive the org handle")
+		name := "livetest-" + time.Now().UTC().Format("20060102t150405")
+		mustOK(t, c, ctx, "fleet-create", map[string]any{
+			"name": name, "organization": org, "type": deviceType,
+		})
+		renamed := name + "-r"
+		mustOK(t, c, ctx, "fleet-rename", map[string]any{
+			"fleet": org + "/" + name, "new_name": renamed,
+		})
+		mustOK(t, c, ctx, "fleet-rm", map[string]any{"fleet": org + "/" + renamed})
+	})
+
+	t.Run("AssetRoundTrip", func(t *testing.T) {
+		if os.Getenv("BALENA_LIVE_ALLOW_ASSET") != "1" {
+			t.Skip("set BALENA_LIVE_ALLOW_ASSET=1 to enable; mutates BALENA_LIVE_RELEASE's asset set")
+		}
+		if release == "" {
+			t.Skip("set BALENA_LIVE_RELEASE to a final release commit")
+		}
+		// The filesystem tools are disabled without an asset root; Config is
+		// package state, so point it at a temp dir for this sub-test only.
+		dir := t.TempDir()
+		origRoot := server.Config.AssetDir
+		server.Config.AssetDir = dir
+		defer func() { server.Config.AssetDir = origRoot }()
+
+		key := "livetest-" + time.Now().UTC().Format("150405")
+		require.NoError(t, os.WriteFile(dir+"/payload.txt", []byte("livetest asset\n"), 0o600))
+		mustOK(t, c, ctx, "release-asset-upload", map[string]any{
+			"release": release, "key": key, "file_path": "payload.txt",
+		})
+		out := mustOK(t, c, ctx, "release-asset-list", map[string]any{"id": release})
+		require.Contains(t, out, key, "uploaded asset missing from release-asset-list")
+		mustOK(t, c, ctx, "release-asset-download", map[string]any{
+			"release": release, "key": key, "output": "roundtrip.txt",
+		})
+		back, err := os.ReadFile(dir + "/roundtrip.txt")
+		require.NoError(t, err)
+		require.Equal(t, "livetest asset\n", string(back), "downloaded asset differs from upload")
+		mustOK(t, c, ctx, "release-asset-delete", map[string]any{"release": release, "key": key})
+	})
+
+	t.Run("SSHKeyRoundTrip", func(t *testing.T) {
+		pub := os.Getenv("BALENA_LIVE_SSH_PUBKEY")
+		if pub == "" {
+			t.Skip("set BALENA_LIVE_SSH_PUBKEY to a public key line to add and remove")
+		}
+		dir := t.TempDir()
+		origRoot := server.Config.AssetDir
+		server.Config.AssetDir = dir
+		defer func() { server.Config.AssetDir = origRoot }()
+		require.NoError(t, os.WriteFile(dir+"/livetest.pub", []byte(pub+"\n"), 0o600))
+
+		name := "livetest-" + time.Now().UTC().Format("150405")
+		mustOK(t, c, ctx, "ssh-key-add", map[string]any{"name": name, "path": "livetest.pub"})
+		// Find the new key's id via the list output and remove it again.
+		out := mustOK(t, c, ctx, "ssh-key-list", nil)
+		id := idNearName(out, name)
+		require.NotZero(t, id, "added key %q not found in ssh-key-list output: %s", name, truncate(out, 300))
+		mustOK(t, c, ctx, "ssh-key-info", map[string]any{"id": id})
+		mustOK(t, c, ctx, "ssh-key-rm", map[string]any{"id": id})
 	})
 
 	t.Run("Restart", func(t *testing.T) {
@@ -308,4 +491,62 @@ func findEnvID(t *testing.T, device, name string) float64 {
 	_, err = fmt.Sscanf(idStr, "%f", &id)
 	require.NoError(t, err, "id %q is not numeric", idStr)
 	return id
+}
+
+// deviceJSONField shells out to `balena device <uuid> --json` and pulls a
+// top-level string field. Same rationale as findEnvID: a targeted string
+// search instead of binding the test to balena's full JSON shape.
+func deviceJSONField(t *testing.T, device, field string) string {
+	t.Helper()
+	cmd := exec.Command("balena", "device", device, "--json")
+	raw, err := cmd.Output()
+	require.NoError(t, err, "balena device --json failed")
+	out := string(raw)
+	marker := fmt.Sprintf("%q:", field)
+	idx := strings.Index(out, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := out[idx+len(marker):]
+	rest = strings.TrimLeft(rest, " \t")
+	if !strings.HasPrefix(rest, "\"") {
+		return "" // null or non-string
+	}
+	rest = rest[1:]
+	end := strings.Index(rest, "\"")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// lastField returns the last whitespace-separated token of the last non-empty
+// line — where `balena device register` prints the new device's uuid.
+func lastField(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
+// idNearName scans a ssh-key-list table for the row containing name and
+// returns the first numeric token on that row (the key id), or 0.
+func idNearName(out, name string) float64 {
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, name) {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			var id float64
+			if _, err := fmt.Sscanf(f, "%f", &id); err == nil && id > 0 {
+				return id
+			}
+		}
+	}
+	return 0
 }

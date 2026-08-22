@@ -300,8 +300,9 @@ func requireIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.Ca
 // rejectMultiTarget blocks comma-separated values on arguments whose balena
 // CLI counterpart would split on "," and act on every element.
 //
-// Several CLI commands (`device purge`, `restart`, `rm`, `deactivate`, `move`,
-// `start-service`, `stop-service`) accept lists, so one tool call could reach
+// Several CLI commands (`device purge`, `restart`, `rm`, `move`,
+// `start-service`, `stop-service`) split on "," and accept lists, so one tool
+// call could reach
 // an unbounded number of devices behind a single guardDestructive check —
 // `device purge` would wipe /data on all of them, permanently. balenamcp
 // constrains those arguments to one device per call: the blast radius stays
@@ -545,9 +546,11 @@ func destructive(t *mcp.Tool) {
 // guard failing returns ("", errResult) for the caller to propagate.
 //
 // Use only for tools whose canonical input is a single identifier (device
-// UUID, fleet slug, release ID). Tools with multi-identifier arguments
-// (tag-set/tag-rm, env-set/env-rm) still call requireConfirm + pickResource
-// directly because their identifier-resolution shape doesn't match.
+// UUID, fleet slug, release ID). Tools whose identifier-resolution shape
+// doesn't match — multi-identifier arguments (tag-set/tag-rm, env-set),
+// numeric IDs (env-rm, env-rename, ssh-key-rm), and list-guarded or
+// multi-argument preambles (device-rm/deactivate/move, the per-service and
+// release-asset tools) — call requireConfirm plus their own guards directly.
 func guardDestructive(r mcp.CallToolRequest, idKey, what string) (string, *mcp.CallToolResult) {
 	if errRes := requireConfirm(r); errRes != nil {
 		return "", errRes
@@ -1892,13 +1895,14 @@ func serviceTarget(r mcp.CallToolRequest) (string, string, *mcp.CallToolResult) 
 // Both tools require every argument the CLI would otherwise prompt for.
 // `fleet create` renders an interactive dropdown when --organization or --type
 // is omitted and the account has more than one candidate; `fleet rename`
-// prompts when newName is omitted. Under MCP a prompt is not a question, it is
-// a hang until BALENAMCP_EXEC_TIMEOUT fires, so these arguments are mandatory
+// prompts when newName is omitted. Under MCP a prompt cannot be answered —
+// with stdin closed the CLI's prompt library crashes outright (and at best
+// would hang until BALENAMCP_EXEC_TIMEOUT) — so these arguments are mandatory
 // here even though the CLI treats them as optional.
 func registerMutatingFleetCreation(srv *server.MCPServer) {
 	// fleet-create ---------------------------------------------------------
 	srv.AddTool(mcp.NewTool("fleet-create",
-		mcp.WithDescription("Create a new fleet. Requires the owning organization's handle (its slug, not its display name — list them with organization-list) and the fleet's default device type (list them with device-type-list). Both are required because the CLI would otherwise show an interactive dropdown and hang the call."),
+		mcp.WithDescription("Create a new fleet. Requires the owning organization's handle (its slug, not its display name — list them with organization-list) and the fleet's default device type (list them with device-type-list). Both are required because the CLI would otherwise show an interactive dropdown, which cannot be answered over MCP and fails the call."),
 		destructive,
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Name for the new fleet.")),

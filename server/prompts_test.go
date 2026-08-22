@@ -110,7 +110,11 @@ func TestPromptHandlers(t *testing.T) {
 			wantDesc: "aaa111",
 			wantInText: []string{
 				"aaa111", "bbb222",
-				"release-info", "release-asset-list", "image-size", "composition=true",
+				"release-info", "release-asset-list", "composition=true",
+				// pins the correction from the v25.2.5 parity audit: the CLI's
+				// JSON release view has no per-service image sizes, and the
+				// prompt must say so rather than promise them.
+				"does NOT include per-service image sizes",
 			},
 		},
 		{
