@@ -1333,7 +1333,7 @@ func registerMutatingDeviceEstate(srv *server.MCPServer) {
 	// on "," — the guard is applied anyway so a list produces a clear error
 	// rather than an unresolvable-UUID failure from the backend.
 	srv.AddTool(mcp.NewTool("device-deactivate",
-		mcp.WithDescription("Deactivate a device, releasing it from its fleet while keeping it in the account. BILLING: balena charges a fee equivalent to one month's normal cost for the device, and it is not charged again until it comes back online. --yes is always passed to bypass the CLI's interactive confirmation."),
+		mcp.WithDescription("Deactivate a device, releasing it from its fleet while keeping it in the account. BILLING: on paid plans balena charges a fee equivalent to one month's normal cost for the device, and it is not charged again until it comes back online. Free-tier accounts are not charged, though the CLI prints the warning either way. --yes is always passed to bypass the CLI's interactive confirmation."),
 		destructive,
 		mcp.WithString("uuid", mcp.Required(),
 			mcp.Description("Device UUID to deactivate. One device per call.")),

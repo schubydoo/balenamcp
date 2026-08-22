@@ -238,7 +238,7 @@ nothing balenamcp-specific about the wiring.
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** (one device per call) | **no — data is gone** |
 > | `device-rm` | **Permanently remove a device from balenaCloud** (passes `--yes`) | **no** |
-> | `device-deactivate` | Release a device from its fleet. **Charges a one-month fee** (passes `--yes`) | partially — the fee is not refunded |
+> | `device-deactivate` | Release a device from its fleet. On paid plans this **charges a one-month fee**; free-tier accounts are not charged (passes `--yes`) | yes (the device re-registers when it comes online) |
 > | `device-move` | Move a device to another fleet | yes (move it back) |
 > | `device-register` | Register a new device with a fleet | yes (`device-rm`) |
 > | `device-os-update` | **Host OS update.** A takeover target re-partitions the disk, **erasing all data** | **no — takeover updates cannot be rolled back** |
