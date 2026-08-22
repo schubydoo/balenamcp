@@ -232,11 +232,11 @@ nothing balenamcp-specific about the wiring.
 > | Tool | Effect | Reversible? |
 > |---|---|---|
 > | `device-reboot` | Remote reboot | yes (device comes back up) |
-> | `device-restart` | Restart containers (no reboot) | yes |
+> | `device-restart` | Restart containers (no reboot; one device per call) | yes |
 > | `device-stop-service` | **Stop a service container and leave it stopped** | yes (`device-start-service`) |
 > | `device-start-service` | Start a stopped service container | yes (`device-stop-service`) |
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
-> | `device-purge` | **Wipe `/data` on the device** | **no — data is gone** |
+> | `device-purge` | **Wipe `/data` on the device** (one device per call) | **no — data is gone** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
 > | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
@@ -299,12 +299,17 @@ state change. Safe to call without confirmation.
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
 of `fleet` / `device`.
 
-`device-start-service` and `device-stop-service` take **one device and one
-service per call**. The balena CLI accepts comma-separated lists for both and
-acts on every combination, which would let a single call stop a service across
-an entire estate behind one confirmation; balenamcp rejects any value
-containing a comma and asks the agent to loop instead. (`device-restart`
-predates this rule and still forwards lists — see its row above.)
+**One device per call.** The balena CLI accepts comma-separated lists on
+several device commands and acts on every element, which would let a single
+call reach an unbounded number of devices behind one confirmation — most
+sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
+value containing a comma on `device-purge`, `device-restart`,
+`device-start-service` and `device-stop-service` (on both the device **and**
+the service argument), and asks the agent to loop instead.
+
+`api-key-revoke` is the sole exception: its CLI command is inherently
+list-shaped (`balena api-key revoke 123,456`) and its targets are credentials,
+not devices, so constraining it to one ID per call would buy no safety.
 
 `fleet-create` requires `organization` **and** `type`, even though the balena
 CLI treats both as optional: the CLI falls back to an interactive dropdown when
