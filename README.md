@@ -295,6 +295,32 @@ state change. Safe to call without confirmation.
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
 of `fleet` / `device`.
 
+### What balenamcp deliberately does not wrap
+
+balenamcp wraps 44 of the balena CLI's ~90 commands. The gap is not an oversight
+backlog — the commands below are **out of scope by decision**, for the reasons
+given. This section exists so the question is settled once instead of being
+re-litigated at every CLI bump; the `balena-cli-parity` review should treat a
+command listed here as accounted for.
+
+| Group | Commands | Why it stays out |
+|---|---|---|
+| Build / deploy pipeline | `build`, `deploy`, `push`, `preload` | Need a local Docker daemon and a source tree. Long-running, and their streaming build output would blow past `BALENAMCP_EXEC_TIMEOUT` and flood the agent's context. |
+| OS image / provisioning | `os configure`, `os download`, `os initialize`, `device init`, `local configure`, `local flash`, `util available-drives` | Need physical media or a downloaded image on the server host; `local flash` writes raw bytes to a block device. The useful read-only half of this group, `os versions`, **is** wrapped. |
+| Device config files | `config generate`, `config inject`, `config read`, `config reconfigure`, `config write` | Operate on a mounted device or an image file, not the cloud API. Same host-hardware dependency as the group above. |
+| Local network / SSH context | `join`, `leave`, `device tunnel` | `join`/`leave` reconfigure the local machine's balena environment. `device tunnel` opens local TCP ports and runs in the foreground indefinitely — the same reason `device logs --tail` is not exposed. |
+| Auth | `login`, `logout` | balenamcp inherits the CLI's existing auth state (`~/.balena/token`) on purpose. Letting an agent change *who the server is* is a privilege-boundary problem, not a feature. |
+| Third-party access | `support` | Grants balena support agents access to your devices and fleets for a duration. Technically a plain cloud call, but delegating access to a third party is a human decision. |
+| CLI host diagnostics | `settings` | Prints local CLI configuration rather than balenaCloud state. Harmless and read-only — this is the cheapest entry here to reverse if a concrete need appears. |
+| Credential minting | `api-key generate` | Prints a **live, long-lived balenaCloud API key to stdout**, and balenamcp returns stdout straight to the MCP client, where it may be persisted, summarized, or forwarded. Redacting it would leave a tool whose entire output is withheld. Generate API keys in the balenaCloud dashboard instead. `api-key-list` and `api-key-revoke` are wrapped, so an agent can still audit and revoke. |
+
+**Standing rule for fleet-class variants.** `app create` and `block create` have
+the same shape as `fleet create` and produce the other two fleet classes. Only
+the `fleet` form is wrapped: it is the class an agent operating a deployed
+estate actually manages, and mirroring every variant triples the surface for no
+new capability. Apply the same test to future variants — wrap the canonical
+form, not its aliases.
+
 ## Prompts
 
 Beyond tools, the server exposes **MCP prompts** — guided, multi-step
