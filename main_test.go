@@ -1153,6 +1153,52 @@ func TestSetupFlagParsing(t *testing.T) {
 	assert.Contains(t, buf.String(), "no-such-flag")
 }
 
+// TestRun covers main's body via the injected exit recorder: the flag-error
+// path must exit 2 without serving, and the good path must serve to stdin
+// EOF without exiting. TestMainEntry then drives main() itself by swapping
+// the process globals it binds, so every line of this file is exercised.
+func TestRun(t *testing.T) {
+	origIn := os.Stdin
+	t.Cleanup(func() { os.Stdin = origIn })
+
+	t.Run("flag error exits 2 without serving", func(t *testing.T) {
+		var code = -1
+		var stderr strings.Builder
+		run([]string{"-no-such-flag"}, &stderr, func(c int) { code = c })
+		assert.Equal(t, 2, code)
+		assert.NotContains(t, stderr.String(), "Starting BalenaMCP server",
+			"a parse failure must not fall through to serving")
+	})
+
+	t.Run("good args serve to stdin EOF without exiting", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		os.Stdin = r
+
+		exited := false
+		var stderr strings.Builder
+		run([]string{"-dry-run"}, &stderr, func(int) { exited = true })
+		assert.False(t, exited, "a clean serve must not call exit")
+		assert.Contains(t, stderr.String(), "Starting BalenaMCP server...")
+	})
+}
+
+// TestMainEntry drives main() itself — the one-line binding of run to the
+// real process globals — by swapping os.Args and os.Stdin for the duration.
+func TestMainEntry(t *testing.T) {
+	origArgs, origIn := os.Args, os.Stdin
+	t.Cleanup(func() { os.Args, os.Stdin = origArgs, origIn })
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, w.Close()) // immediate EOF: serve returns, main returns
+	os.Args = []string{"balenamcp", "-dry-run"}
+	os.Stdin = r
+
+	main() // banner goes to real stderr; success here is returning at all
+}
+
 // TestServe covers the stdio serve shim. ServeStdio reads os.Stdin directly,
 // so the test swaps it for a pipe: closing the write end immediately is a
 // clean client disconnect (EOF), and handing it an already-closed file forces

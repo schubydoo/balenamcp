@@ -35,10 +35,18 @@ func serve(srv *mcpserver.MCPServer, stderr io.Writer) {
 	}
 }
 
-func main() {
-	srv, err := setup(os.Args[1:], os.Stderr)
+// run is main's body with its process-globals injected: argv, stderr, and
+// the exit function. Injecting exit is what makes the flag-error path
+// testable — os.Exit cannot run under go test, but a recorder can.
+func run(args []string, stderr io.Writer, exit func(int)) {
+	srv, err := setup(args, stderr)
 	if err != nil {
-		os.Exit(2) // flag package already printed the parse error + usage
+		exit(2) // flag package already printed the parse error + usage
+		return
 	}
-	serve(srv, os.Stderr)
+	serve(srv, stderr)
+}
+
+func main() {
+	run(os.Args[1:], os.Stderr, os.Exit)
 }
