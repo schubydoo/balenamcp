@@ -134,6 +134,7 @@ A `-dry-run` flag is available — the server prints the balena command it
 | Variable | Default | Purpose |
 |---|---|---|
 | `BALENAMCP_EXEC_TIMEOUT` | `60` (seconds) | Wall-clock cap on any single balena CLI subprocess. Prevents `device-logs --tail` and similar long-running commands from blocking the MCP transport indefinitely. Set to a higher integer for slow networks; the server logs a warning and falls back to default if the value is non-positive or non-numeric. |
+| `BALENAMCP_ASSET_DIR` | unset (filesystem tools disabled) | The single directory balenamcp may read from or write to on the host. Unset — the default — makes `release-asset-download` and `release-asset-upload` refuse to run at all; every other tool is a pure cloud call and is unaffected. When set, those tools take paths **relative to this directory**, and absolute paths, `..` traversal and symlinks pointing outside it are rejected. Set it to a dedicated directory, not `$HOME`. |
 | `BALENAMCP_REQUIRE_CONFIRM` | unset (off) | When set to `1`/`true`, every destructive tool refuses to run unless the call carries `confirm: true` in its arguments. A belt-and-suspenders safety net for MCP clients that ignore the `destructiveHint` annotation. Off by default — Claude Desktop and other compliant clients already prompt before invoking destructive tools, so the gate is redundant there. |
 
 ## Authenticate
@@ -223,7 +224,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **38 of the 58 tools change state on real devices or in balenaCloud.** A
+> **41 of the 61 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -269,6 +270,9 @@ nothing balenamcp-specific about the wiring.
 > | `organization-rename` | Rename an organization | yes (rename again) |
 > | `organization-rm` | **Delete an organization** (passes `--yes`) | **no** |
 > | `api-key-revoke` | **Revoke API key(s)** by ID | **no** |
+> | `release-asset-upload` | Upload a local file as a release asset | yes (`release-asset-delete`) |
+> | `release-asset-download` | **Writes a file to the server's host filesystem** | yes (delete the file) |
+> | `release-asset-delete` | **Delete a release asset** (passes `--yes`) | **no — the CLI documents this as impossible to undo** |
 >
 > **Belt-and-suspenders gate:** set `BALENAMCP_REQUIRE_CONFIRM=1` and every
 > destructive tool will refuse to run unless the call carries
@@ -316,6 +320,21 @@ sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
 value containing a comma on `device-purge`, `device-restart`,
 `device-start-service` and `device-stop-service` (on both the device **and**
 the service argument), and asks the agent to loop instead.
+
+**Host filesystem access is opt-in.** `release-asset-download` and
+`release-asset-upload` are the only tools that read or write local files, and
+they refuse to run unless `BALENAMCP_ASSET_DIR` names a directory. All their
+paths are relative to it. Argv-slice construction stops shell injection but
+says nothing about path traversal, so the boundary is enforced explicitly:
+absolute paths and Windows volume names are refused, the joined path must stay
+inside the root after cleaning (rejecting `..`), and it must still be inside
+after symlink resolution (rejecting a symlink planted in the root that points
+out of it). `release-asset-delete` touches no local files and works either way.
+
+`release-asset-download` also requires `output`. The CLI would otherwise write
+to the server process's working directory, outside the configured root. An
+existing destination is an error unless `overwrite: true`, which stands in for
+the CLI's interactive overwrite prompt — that prompt would hang over MCP.
 
 `device-move` requires `fleet` and `device-rm` / `device-deactivate` always
 pass `--yes`, so `guardDestructive` (and `BALENAMCP_REQUIRE_CONFIRM`) is the

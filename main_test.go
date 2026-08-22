@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -483,6 +485,9 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"release-asset-download", map[string]any{"release": "abc123", "key": "cfg", "output": "a.bin"}},
+		{"release-asset-upload", map[string]any{"release": "abc123", "key": "cfg", "file_path": "a.bin"}},
+		{"release-asset-delete", map[string]any{"release": "abc123", "key": "cfg"}},
 		{"device-rm", map[string]any{"uuid": "7cf02a6"}},
 		{"device-deactivate", map[string]any{"uuid": "7cf02a6"}},
 		{"device-move", map[string]any{"uuid": "7cf02a6", "fleet": "myorg/newfleet"}},
@@ -771,4 +776,92 @@ func TestAnnotationsInvariant(t *testing.T) {
 				tool.Name, *ro)
 		}
 	}
+}
+
+// TestReleaseAssetTools covers the only tools that touch the host filesystem.
+// The path confinement is the whole security boundary, so the refusals matter
+// at least as much as the happy path.
+func TestReleaseAssetTools(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("BALENAMCP_ASSET_DIR", root)
+	c, ctx := newTestClient(t)
+
+	// delete is a pure cloud call and always passes --yes.
+	expect(t, c, ctx, "release-asset-delete",
+		map[string]any{"release": "abc123", "key": "config.json"},
+		"balena release-asset delete abc123 --key config.json --yes")
+
+	// download resolves output against the root and only sends --overwrite
+	// when asked.
+	expect(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "config.json", "output": "cfg.json"},
+		"balena release-asset download abc123 --key config.json --output "+filepath.Join(root, "cfg.json"))
+	expect(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "config.json", "output": "sub/cfg.json", "overwrite": true},
+		"balena release-asset download abc123 --key config.json --output "+
+			filepath.Join(root, "sub/cfg.json")+" --overwrite")
+
+	// upload requires the file to exist inside the root.
+	payload := filepath.Join(root, "app.tar.gz")
+	require.NoError(t, os.WriteFile(payload, []byte("x"), 0o600))
+	expect(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "app", "file_path": "app.tar.gz"},
+		"balena release-asset upload abc123 "+payload+" --key app")
+	expect(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "app", "file_path": "app.tar.gz", "overwrite": true},
+		"balena release-asset upload abc123 "+payload+" --key app --overwrite")
+
+	// ----- refusals -----
+
+	// download will not silently clobber an existing file.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "taken.bin"), []byte("x"), 0o600))
+	expectError(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "k", "output": "taken.bin"},
+		"already exists")
+
+	// upload refuses a missing file and a directory.
+	expectError(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "k", "file_path": "nope.bin"},
+		"not readable")
+	require.NoError(t, os.Mkdir(filepath.Join(root, "adir"), 0o700))
+	expectError(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "k", "file_path": "adir"},
+		"is a directory")
+
+	// path confinement, exercised through a real tool rather than only the
+	// helper: absolute paths, traversal, and symlink escape.
+	expectError(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "k", "output": filepath.Join(root, "abs.bin")},
+		"must be relative")
+	expectError(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "k", "output": "../escape.bin"},
+		"escapes BALENAMCP_ASSET_DIR")
+	expectError(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "k", "file_path": "../../etc/passwd"},
+		"escapes BALENAMCP_ASSET_DIR")
+
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o600))
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err == nil {
+		expectError(t, c, ctx, "release-asset-upload",
+			map[string]any{"release": "abc123", "key": "k", "file_path": "link/secret"},
+			"symbolic link")
+	}
+}
+
+// TestReleaseAssetToolsDisabled asserts the filesystem tools fail closed when
+// BALENAMCP_ASSET_DIR is unset, while the pure cloud one keeps working.
+func TestReleaseAssetToolsDisabled(t *testing.T) {
+	t.Setenv("BALENAMCP_ASSET_DIR", "")
+	c, ctx := newTestClient(t)
+
+	expectError(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "k", "output": "cfg.json"},
+		"filesystem access is disabled")
+	expectError(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "k", "file_path": "cfg.json"},
+		"filesystem access is disabled")
+	expect(t, c, ctx, "release-asset-delete",
+		map[string]any{"release": "abc123", "key": "k"},
+		"balena release-asset delete abc123 --key k --yes")
 }

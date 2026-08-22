@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,14 @@ type ServerConfig struct {
 	// (or for shared deployments where you don't trust every connected
 	// agent). Populated from BALENAMCP_REQUIRE_CONFIRM at SetupServer time.
 	RequireConfirm bool
+
+	// AssetDir is the single directory balenamcp may read from or write to on
+	// the host. Populated from BALENAMCP_ASSET_DIR at SetupServer time and
+	// stored fully resolved (absolute, symlinks expanded). Empty means the
+	// filesystem-touching tools are disabled entirely, which is the default:
+	// every other tool in the server is a pure cloud call, so host filesystem
+	// access is opt-in rather than something an operator inherits by upgrading.
+	AssetDir string
 }
 
 var Config = ServerConfig{}
@@ -46,6 +55,38 @@ var Config = ServerConfig{}
 func loadConfigFromEnv() {
 	Config.ExecTimeout = loadExecTimeoutFromEnv()
 	Config.RequireConfirm = loadRequireConfirmFromEnv()
+	Config.AssetDir = loadAssetDirFromEnv()
+}
+
+// loadAssetDirFromEnv reads BALENAMCP_ASSET_DIR and resolves it to an
+// absolute, symlink-free path. An unset value disables the filesystem tools.
+// A value that cannot be resolved (missing directory, not a directory) also
+// disables them, with a stderr warning: failing closed is the only safe
+// reading of a misconfigured filesystem boundary.
+func loadAssetDirFromEnv() string {
+	v := os.Getenv("BALENAMCP_ASSET_DIR")
+	if v == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"BALENAMCP_ASSET_DIR=%q cannot be resolved (%v); filesystem tools stay disabled\n", v, err)
+		return ""
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"BALENAMCP_ASSET_DIR=%q does not exist or is unreadable (%v); filesystem tools stay disabled\n", v, err)
+		return ""
+	}
+	info, err := os.Stat(real)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr,
+			"BALENAMCP_ASSET_DIR=%q is not a directory; filesystem tools stay disabled\n", v)
+		return ""
+	}
+	return real
 }
 
 // loadExecTimeoutFromEnv parses BALENAMCP_EXEC_TIMEOUT (seconds). Invalid or
@@ -319,6 +360,97 @@ func getIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.CallTo
 		return "", e
 	}
 	return v, nil
+}
+
+// withinRoot reports whether p is root itself or lies underneath it. Uses
+// filepath.Rel rather than a string prefix so that a sibling directory sharing
+// a name prefix (/srv/assets-evil vs /srv/assets) is not treated as inside.
+func withinRoot(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// evalExistingPrefix resolves symlinks on the longest existing ancestor of p
+// and rejoins the not-yet-existing remainder. Needed because
+// filepath.EvalSymlinks fails outright on a path that does not exist yet,
+// which is the normal case for a download target.
+func evalExistingPrefix(p string) (string, error) {
+	rest := ""
+	cur := p
+	for {
+		real, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			if rest == "" {
+				return real, nil
+			}
+			return filepath.Join(real, rest), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			// Walked to the filesystem root without finding anything that
+			// exists; nothing can be resolved, so report the cleaned path.
+			return p, nil
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+// resolveAssetPath maps a caller-supplied path onto an absolute path confined
+// to Config.AssetDir, or returns a structured error explaining the refusal.
+//
+// This is the whole security boundary for the filesystem-touching tools. Our
+// argv-slice construction prevents shell injection but says nothing about path
+// traversal: without this, an agent choosing `file_path` on an upload could
+// exfiltrate any file the server process can read, and one choosing `output`
+// on a download could write anywhere it can write. The rules are:
+//
+//   - the tools are off unless BALENAMCP_ASSET_DIR is set;
+//   - the caller's path is always relative to that root — absolute paths,
+//     Windows volume names and leading dashes are refused outright;
+//   - the joined path must stay inside the root after cleaning, which rejects
+//     ".." traversal;
+//   - and it must still be inside after symlink resolution, which rejects a
+//     symlink planted inside the root that points out of it.
+func resolveAssetPath(raw, what string) (string, *mcp.CallToolResult) {
+	root := Config.AssetDir
+	if root == "" {
+		return "", mcp.NewToolResultError(
+			"filesystem access is disabled on this server: start balenamcp with " +
+				"BALENAMCP_ASSET_DIR=/some/directory to enable the tools that read or " +
+				"write local files. All paths are then relative to that directory.")
+	}
+	if raw == "" {
+		return "", mcp.NewToolResultError(fmt.Sprintf("%s is required", what))
+	}
+	if e := rejectFlagShape(raw, what); e != nil {
+		return "", e
+	}
+	if filepath.IsAbs(raw) || filepath.VolumeName(raw) != "" {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"%q is not a valid %s: paths must be relative to BALENAMCP_ASSET_DIR, not absolute", raw, what))
+	}
+	full := filepath.Join(root, raw)
+	if !withinRoot(root, full) {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"%q escapes BALENAMCP_ASSET_DIR: %s must stay inside the configured directory", raw, what))
+	}
+	real, err := evalExistingPrefix(full)
+	if err != nil {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"%q cannot be resolved: %v", raw, err))
+	}
+	if !withinRoot(root, real) {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"%q resolves outside BALENAMCP_ASSET_DIR through a symbolic link", raw))
+	}
+	return full, nil
 }
 
 // Version is the application version reported in the MCP `serverInfo` block
@@ -779,6 +911,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingServices(srv)
 	registerMutatingDeviceIdentity(srv)
 	registerMutatingDeviceEstate(srv)
+	registerMutatingReleaseAssets(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1298,6 +1431,127 @@ func registerMutatingFleetLifecycle(srv *server.MCPServer) {
 		}
 		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
 	})
+}
+
+// registerMutatingReleaseAssets: release-asset-download, release-asset-upload,
+// release-asset-delete. The only tools in the server that touch the host
+// filesystem; every path they take is confined by resolveAssetPath to
+// BALENAMCP_ASSET_DIR, and download/upload refuse to run at all when that is
+// unset. release-asset-delete is a pure cloud call and works either way.
+func registerMutatingReleaseAssets(srv *server.MCPServer) {
+	// release-asset-download -----------------------------------------------
+	//
+	// output is required even though the CLI defaults to the asset's original
+	// filename: that default writes into the server process's working
+	// directory, which is outside the configured root. The existence check
+	// below stands in for --overwrite's interactive confirmation, which would
+	// hang over MCP.
+	srv.AddTool(mcp.NewTool("release-asset-download",
+		mcp.WithDescription("Download a release asset to the server's configured asset directory. Requires BALENAMCP_ASSET_DIR to be set on the server; output is a path relative to it. Large assets can exceed BALENAMCP_EXEC_TIMEOUT — raise it for big downloads. List available assets with release-asset-list."),
+		destructive,
+		mcp.WithString("release", mcp.Required(),
+			mcp.Description("Release commit hash or numeric ID.")),
+		mcp.WithString("key", mcp.Required(),
+			mcp.Description("Asset key, as listed by release-asset-list.")),
+		mcp.WithString("output", mcp.Required(),
+			mcp.Description("Destination path, relative to BALENAMCP_ASSET_DIR (e.g. 'downloads/app.tar.gz'). Absolute paths and '..' are rejected.")),
+		mcp.WithBoolean("overwrite",
+			mcp.Description("Set to true to replace an existing local file. Defaults to false, in which case an existing file is an error.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		release, key, errRes := assetTarget(r)
+		if errRes != nil {
+			return errRes, nil
+		}
+		output, errRes := resolveAssetPath(r.GetString("output", ""), "output path")
+		if errRes != nil {
+			return errRes, nil
+		}
+		overwrite := r.GetBool("overwrite", false)
+		if !overwrite {
+			if _, err := os.Stat(output); err == nil {
+				return mcp.NewToolResultError(fmt.Sprintf(
+					"%q already exists: pass overwrite:true to replace it",
+					r.GetString("output", ""))), nil
+			}
+		}
+		args := []string{"release-asset", "download", release, "--key", key, "--output", output}
+		if overwrite {
+			args = append(args, "--overwrite")
+		}
+		return runCmd(ctx, args)
+	})
+
+	// release-asset-upload -------------------------------------------------
+	//
+	// --chunk-size and --parallel-chunks are not exposed; they are throughput
+	// tuning knobs with sane defaults and no bearing on what an agent is
+	// trying to do.
+	srv.AddTool(mcp.NewTool("release-asset-upload",
+		mcp.WithDescription("Upload a local file as a release asset. Requires BALENAMCP_ASSET_DIR to be set on the server; file_path is a path relative to it, so only files placed in that directory can be uploaded. Large files can exceed BALENAMCP_EXEC_TIMEOUT."),
+		destructive,
+		mcp.WithString("release", mcp.Required(),
+			mcp.Description("Release commit hash or numeric ID.")),
+		mcp.WithString("key", mcp.Required(),
+			mcp.Description("Key to store the asset under.")),
+		mcp.WithString("file_path", mcp.Required(),
+			mcp.Description("File to upload, relative to BALENAMCP_ASSET_DIR. Absolute paths and '..' are rejected.")),
+		mcp.WithBoolean("overwrite",
+			mcp.Description("Set to true to replace an asset already stored under this key. Defaults to false.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		release, key, errRes := assetTarget(r)
+		if errRes != nil {
+			return errRes, nil
+		}
+		filePath, errRes := resolveAssetPath(r.GetString("file_path", ""), "file path")
+		if errRes != nil {
+			return errRes, nil
+		}
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"%q is not readable: %v", r.GetString("file_path", ""), err)), nil
+		}
+		if info.IsDir() {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"%q is a directory, not a file", r.GetString("file_path", ""))), nil
+		}
+		args := []string{"release-asset", "upload", release, filePath, "--key", key}
+		args = appendBoolFlag(args, r, "overwrite", "--overwrite")
+		return runCmd(ctx, args)
+	})
+
+	// release-asset-delete -------------------------------------------------
+	srv.AddTool(mcp.NewTool("release-asset-delete",
+		mcp.WithDescription("Permanently delete a release asset. The CLI documents this as impossible to undo. Pure cloud call — it touches no local files, so it works whether or not BALENAMCP_ASSET_DIR is set. --yes is always passed to bypass the interactive confirmation."),
+		destructive,
+		mcp.WithString("release", mcp.Required(),
+			mcp.Description("Release commit hash or numeric ID.")),
+		mcp.WithString("key", mcp.Required(),
+			mcp.Description("Asset key to delete, as listed by release-asset-list.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		release, key, errRes := assetTarget(r)
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"release-asset", "delete", release, "--key", key, "--yes"})
+	})
+}
+
+// assetTarget runs the shared preamble for the release-asset tools: the
+// confirm gate, then the release identifier and asset key that all three take.
+func assetTarget(r mcp.CallToolRequest) (string, string, *mcp.CallToolResult) {
+	if errRes := requireConfirm(r); errRes != nil {
+		return "", "", errRes
+	}
+	release, errRes := requireIdentifier(r, "release", "release ID or commit")
+	if errRes != nil {
+		return "", "", errRes
+	}
+	key, errRes := requireIdentifier(r, "key", "asset key")
+	if errRes != nil {
+		return "", "", errRes
+	}
+	return release, key, nil
 }
 
 // registerMutatingDeviceEstate: device-rm, device-deactivate, device-move,

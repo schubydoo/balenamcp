@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -256,6 +258,104 @@ func TestRequireSingleTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadAssetDirFromEnv(t *testing.T) {
+	t.Run("unset disables filesystem tools", func(t *testing.T) {
+		t.Setenv("BALENAMCP_ASSET_DIR", "")
+		if got := loadAssetDirFromEnv(); got != "" {
+			t.Errorf("unset should yield empty, got %q", got)
+		}
+	})
+	t.Run("missing directory fails closed", func(t *testing.T) {
+		t.Setenv("BALENAMCP_ASSET_DIR", filepath.Join(t.TempDir(), "nope"))
+		if got := loadAssetDirFromEnv(); got != "" {
+			t.Errorf("missing dir should fail closed, got %q", got)
+		}
+	})
+	t.Run("a file is not a directory", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("BALENAMCP_ASSET_DIR", f)
+		if got := loadAssetDirFromEnv(); got != "" {
+			t.Errorf("a regular file should fail closed, got %q", got)
+		}
+	})
+	t.Run("valid directory resolves absolute", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("BALENAMCP_ASSET_DIR", dir)
+		got := loadAssetDirFromEnv()
+		if got == "" || !filepath.IsAbs(got) {
+			t.Errorf("valid dir should resolve to an absolute path, got %q", got)
+		}
+	})
+}
+
+func TestWithinRoot(t *testing.T) {
+	root := filepath.Join("/srv", "assets")
+	cases := []struct {
+		p    string
+		want bool
+	}{
+		{root, true},
+		{filepath.Join(root, "a", "b"), true},
+		// a sibling sharing a name prefix must not count as inside; this is
+		// what a plain strings.HasPrefix check would get wrong.
+		{filepath.Join("/srv", "assets-evil"), false},
+		{filepath.Join("/srv"), false},
+		{filepath.Join("/etc", "passwd"), false},
+	}
+	for _, tc := range cases {
+		if got := withinRoot(root, tc.p); got != tc.want {
+			t.Errorf("withinRoot(%q, %q) = %v, want %v", root, tc.p, got, tc.want)
+		}
+	}
+}
+
+func TestResolveAssetPath(t *testing.T) {
+	root := t.TempDir()
+	Config.AssetDir = root
+	t.Cleanup(func() { Config.AssetDir = "" })
+
+	// a path that does not exist yet still resolves — the download case.
+	got, errRes := resolveAssetPath("sub/new.bin", "output path")
+	if errRes != nil {
+		t.Fatalf("unexpected error: %v", errRes)
+	}
+	if got != filepath.Join(root, "sub", "new.bin") {
+		t.Errorf("got %q", got)
+	}
+
+	for _, tc := range []struct{ name, in, wantErrLike string }{
+		{"empty", "", "required"},
+		{"leading dash", "-o", "cannot start with '-'"},
+		{"traversal", "../x", "escapes"},
+		{"nested traversal", "a/../../x", "escapes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errRes := resolveAssetPath(tc.in, "output path")
+			if errRes == nil {
+				t.Fatalf("expected refusal for %q", tc.in)
+			}
+			txt, ok := mcp.AsTextContent(errRes.Content[0])
+			if !ok {
+				t.Fatalf("error content is not text")
+			}
+			if !strings.Contains(txt.Text, tc.wantErrLike) {
+				t.Errorf("error %q does not contain %q", txt.Text, tc.wantErrLike)
+			}
+		})
+	}
+
+	t.Run("disabled when root unset", func(t *testing.T) {
+		Config.AssetDir = ""
+		defer func() { Config.AssetDir = root }()
+		if _, errRes := resolveAssetPath("ok.bin", "output path"); errRes == nil {
+			t.Errorf("should refuse when BALENAMCP_ASSET_DIR is unset")
+		}
+	})
 }
 
 func TestGetSingleTarget(t *testing.T) {
