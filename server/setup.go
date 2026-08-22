@@ -905,6 +905,37 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 		return runCmd(ctx, []string{"device", "purge", uuid})
 	})
 
+	// device-os-update -----------------------------------------------------
+	//
+	// The version argument is required. Without --version the CLI renders an
+	// inquirer list of candidate versions, which over MCP is a hang until
+	// BALENAMCP_EXEC_TIMEOUT. --yes is always passed for the same reason: the
+	// command asks for confirmation twice (once more when the update requires
+	// a takeover), so guardDestructive is the only confirmation layer.
+	//
+	// --include-draft is deliberately not exposed. Upstream marks it mutually
+	// exclusive with --version, so the two cannot be sent together, and it is
+	// redundant anyway: when a version is supplied the CLI derives draft
+	// support from the version string itself (a prerelease version enables it).
+	srv.AddTool(mcp.NewTool("device-os-update",
+		mcp.WithDescription("Start a host OS update on a device, pinning it to a target balenaOS version. Requires balenaCloud — this does not work against openBalena or standalone balenaOS. DANGEROUS: if the target requires a takeover update the device is re-partitioned, which ERASES ALL DATA on it and cannot be rolled back. The update is queued rather than immediate and finishes with a device restart; poll device-info to follow it. Find candidate versions with os-versions (keyed by device type) and the device's current version with device-info."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+		mcp.WithString("version", mcp.Required(),
+			mcp.Description("Target balenaOS version, e.g. '2.101.7' or '2.31.0+rev1.prod'. Required: omitting it makes the CLI prompt interactively, which would hang. Must be one of the device's supported update targets or the CLI rejects it. A prerelease version enables draft targets automatically.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		version, errRes := requireIdentifier(r, "version", "balenaOS version")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "os-update", uuid, "--version", version, "--yes"})
+	})
+
 	// device-local-mode-set ------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-local-mode-set",
 		mcp.WithDescription("Enable or disable local mode on a development device. Local mode permits local (LAN) push/SSH but suspends cloud-managed updates. Read the current state with device-local-mode-get."),
