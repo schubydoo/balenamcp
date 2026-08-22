@@ -196,6 +196,68 @@ func TestRequireIdentifier(t *testing.T) {
 	}
 }
 
+func TestRequireSingleTarget(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        map[string]any
+		want        string
+		wantErrLike string // substring of the structured-error text, "" = success
+	}{
+		{
+			name: "single target passes through",
+			args: map[string]any{"uuid": "7cf02a6"},
+			want: "7cf02a6",
+		},
+		{
+			name:        "comma-separated list is rejected",
+			args:        map[string]any{"uuid": "7cf02a6,55d43b3"},
+			wantErrLike: "single target per call",
+		},
+		{
+			name:        "trailing comma is still a list",
+			args:        map[string]any{"uuid": "7cf02a6,"},
+			wantErrLike: "single target per call",
+		},
+		{
+			name:        "missing arg errors before the list check",
+			args:        map[string]any{},
+			wantErrLike: "uuid",
+		},
+		{
+			name:        "flag shape errors before the list check",
+			args:        map[string]any{"uuid": "--help,x"},
+			wantErrLike: "cannot start with '-'",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errRes := requireSingleTarget(req(tc.args), "uuid", "device UUID")
+			if tc.wantErrLike == "" {
+				if errRes != nil {
+					t.Fatalf("unexpected error: %v", errRes)
+				}
+				if got != tc.want {
+					t.Errorf("got %q, want %q", got, tc.want)
+				}
+				return
+			}
+			if errRes == nil {
+				t.Fatalf("expected error containing %q, got value %q", tc.wantErrLike, got)
+			}
+			if got != "" {
+				t.Errorf("error path must return an empty value, got %q", got)
+			}
+			txt, ok := mcp.AsTextContent(errRes.Content[0])
+			if !ok {
+				t.Fatalf("error content is not text: %T", errRes.Content[0])
+			}
+			if !strings.Contains(txt.Text, tc.wantErrLike) {
+				t.Errorf("error %q does not contain %q", txt.Text, tc.wantErrLike)
+			}
+		})
+	}
+}
+
 func TestGetIdentifier(t *testing.T) {
 	// absent
 	v, errRes := getIdentifier(req(map[string]any{}), "fleet", "fleet slug")

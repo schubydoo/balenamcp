@@ -256,6 +256,29 @@ func requireIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.Ca
 	return v, nil
 }
 
+// requireSingleTarget is requireIdentifier plus a multi-target guard, for
+// arguments whose balena CLI counterpart accepts a comma-separated list.
+//
+// Several CLI commands (`device rm`, `deactivate`, `move`, `start-service`,
+// `stop-service`) split their positional args on "," and act on every element,
+// so one tool call could reach an unbounded number of devices behind a single
+// guardDestructive check. balenamcp constrains those arguments to one target
+// per call: the blast radius stays bounded, and each action is individually
+// visible to whoever is auditing the agent. An agent that genuinely needs N
+// targets loops, which is cheap.
+func requireSingleTarget(r mcp.CallToolRequest, key, what string) (string, *mcp.CallToolResult) {
+	v, errRes := requireIdentifier(r, key, what)
+	if errRes != nil {
+		return "", errRes
+	}
+	if strings.Contains(v, ",") {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"%q lists more than one %s: this tool accepts a single target per call, "+
+				"so call it once per %s", v, what, what))
+	}
+	return v, nil
+}
+
 // getIdentifier is the optional-arg companion to requireIdentifier. Returns
 // ("", nil) when the arg is absent and (value, errResult) when present but
 // flag-shaped.
@@ -707,6 +730,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingPins(srv)
 	registerMutatingFleetLifecycle(srv)
 	registerMutatingFleetCreation(srv)
+	registerMutatingServices(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1189,6 +1213,68 @@ func registerMutatingFleetLifecycle(srv *server.MCPServer) {
 		}
 		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
 	})
+}
+
+// registerMutatingServices: device-start-service, device-stop-service.
+// Per-service container control, the pair that makes "take this container out
+// of service while I investigate" possible without falling back to device-ssh.
+//
+// The CLI accepts comma-separated lists for BOTH the device and the service
+// argument and acts on every combination. Both tools here take exactly one of
+// each (see requireSingleTarget) so a single call cannot fan out across an
+// estate. Neither command has a --yes flag or an interactive prompt, so
+// guardDestructive is the only confirmation layer.
+func registerMutatingServices(srv *server.MCPServer) {
+	// device-start-service -------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-start-service",
+		mcp.WithDescription("Start a stopped service container on a device. The restorative counterpart to device-stop-service. One device and one service per call — pass a comma-separated list and the call is rejected."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID. One device per call; comma-separated lists are rejected.")),
+		mcp.WithString("service", mcp.Required(),
+			mcp.Description("Service name to start. One service per call; comma-separated lists are rejected.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, service, errRes := serviceTarget(r)
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "start-service", uuid, service})
+	})
+
+	// device-stop-service --------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-stop-service",
+		mcp.WithDescription("Stop a service container on a device and leave it stopped. Unlike device-restart the container does not come back on its own; use device-start-service to restore it. One device and one service per call — pass a comma-separated list and the call is rejected."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID. One device per call; comma-separated lists are rejected.")),
+		mcp.WithString("service", mcp.Required(),
+			mcp.Description("Service name to stop. One service per call; comma-separated lists are rejected.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, service, errRes := serviceTarget(r)
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "stop-service", uuid, service})
+	})
+}
+
+// serviceTarget runs the shared preamble for the two per-service tools: the
+// confirm gate, then a single-target lookup of each positional argument.
+// guardDestructive is not usable here because both arguments are list-accepting
+// and must go through requireSingleTarget.
+func serviceTarget(r mcp.CallToolRequest) (string, string, *mcp.CallToolResult) {
+	if errRes := requireConfirm(r); errRes != nil {
+		return "", "", errRes
+	}
+	uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
+	if errRes != nil {
+		return "", "", errRes
+	}
+	service, errRes := requireSingleTarget(r, "service", "service name")
+	if errRes != nil {
+		return "", "", errRes
+	}
+	return uuid, service, nil
 }
 
 // registerMutatingFleetCreation: fleet-create, fleet-rename. Fleet lifecycle
