@@ -782,12 +782,20 @@ func registerReadOnlyReleases(srv *server.MCPServer) {
 		readOnly,
 		mcp.WithString("id", mcp.Required(),
 			mcp.Description("Release commit (full or short) or numeric release ID.")),
-		mcp.WithBoolean("composition", mcp.Description("Return the release docker-compose composition instead of metadata.")),
-		mcp.WithBoolean("json", mcp.Description("Return JSON instead of a text table.")),
+		mcp.WithBoolean("composition", mcp.Description("Return the release docker-compose composition instead of metadata. Mutually exclusive with json: the composition is emitted as YAML and the CLI silently ignores --json alongside it.")),
+		mcp.WithBoolean("json", mcp.Description("Return JSON instead of a text table. Not combinable with composition.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, errRes := requireIdentifier(r, "id", "release commit or ID")
 		if errRes != nil {
 			return errRes, nil
+		}
+		// The CLI's --composition path prints YAML and returns nothing for
+		// oclif's --json machinery to serialize, so --json is silently
+		// ignored — the caller asks for JSON and receives YAML. Reject the
+		// combination instead of letting an agent misparse the output.
+		if r.GetBool("composition", false) && r.GetBool("json", false) {
+			return mcp.NewToolResultError(
+				"the 'composition' and 'json' options are mutually exclusive: the composition is always emitted as YAML"), nil
 		}
 		args := []string{"release", id}
 		args = appendBoolFlag(args, r, "composition", "--composition")
@@ -1300,7 +1308,8 @@ func registerMutatingEnvs(srv *server.MCPServer) {
 		mcp.WithDescription("Set an env or config variable on a fleet or device, optionally scoped to a service. Specify exactly one of: fleet, device."),
 		destructive,
 		mcp.WithString("name", mcp.Required(), mcp.Description("Variable name.")),
-		mcp.WithString("value", mcp.Description("Variable value. If omitted, the value of a same-named local shell env var is used by the CLI.")),
+		mcp.WithString("value", mcp.Required(),
+			mcp.Description("Variable value. Required and non-empty: when the CLI receives no value it falls back to reading the SERVER process's environment variable of the same name and writes that to balenaCloud, which on an MCP server is an information leak, not a convenience.")),
 		mcp.WithString("fleet", mcp.Description("Fleet name or slug.")),
 		mcp.WithString("device", mcp.Description("Device UUID.")),
 		mcp.WithString("service", mcp.Description("Restrict to this service.")),
@@ -1321,12 +1330,19 @@ func registerMutatingEnvs(srv *server.MCPServer) {
 		if errRes != nil {
 			return errRes, nil
 		}
-		args := []string{"env", "set", name}
 		// value is free-form (env values can legitimately contain anything);
-		// intentionally not flag-shape-guarded.
-		if v := r.GetString("value", ""); v != "" {
-			args = append(args, v)
+		// intentionally not flag-shape-guarded. It IS required and must be
+		// non-empty: an omitted or empty value makes the CLI fall back to
+		// process.env[name] — the balenamcp server's own environment — and
+		// write that to balenaCloud. Any secret exported into the server
+		// process would become readable by whoever can see the fleet's
+		// variables, so the fallback is closed off entirely.
+		value := r.GetString("value", "")
+		if value == "" {
+			return mcp.NewToolResultError(
+				"env-set requires a non-empty 'value': the CLI's fallback for a missing value reads the server's own environment, which is not available over MCP"), nil
 		}
+		args := []string{"env", "set", name, value}
 		args = append(args, flag...)
 		if service != "" {
 			args = append(args, "--service", service)
@@ -1337,14 +1353,13 @@ func registerMutatingEnvs(srv *server.MCPServer) {
 
 	// env-rm ---------------------------------------------------------------
 	srv.AddTool(mcp.NewTool("env-rm",
-		mcp.WithDescription("Remove an env or config variable by its numeric database ID (see env-list). Use --device/--service/--config booleans to disambiguate the variable type."),
+		mcp.WithDescription("Remove an env or config variable by its numeric database ID (see env-list). Use --device/--service/--config booleans to disambiguate the variable type; --config and --service are mutually exclusive. --yes is always passed to bypass the CLI's interactive confirmation."),
 		destructive,
 		mcp.WithNumber("id", mcp.Required(),
 			mcp.Description("Numeric database ID of the variable (from env-list).")),
 		mcp.WithBoolean("device", mcp.Description("The variable is a device-scoped variable.")),
 		mcp.WithBoolean("service", mcp.Description("The variable is a service-scoped variable.")),
 		mcp.WithBoolean("config", mcp.Description("The variable is a config variable.")),
-		mcp.WithBoolean("yes", mcp.Description("Skip the interactive confirmation prompt. Must be true for the call to actually delete.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if errRes := requireConfirm(r); errRes != nil {
 			return errRes, nil
@@ -1354,11 +1369,22 @@ func registerMutatingEnvs(srv *server.MCPServer) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Upstream marks --config and --service mutually exclusive; reject the
+		// combination here rather than surfacing oclif's late parse error.
+		// (env-rename has carried this same guard from the start.)
+		if r.GetBool("config", false) && r.GetBool("service", false) {
+			return mcp.NewToolResultError(
+				"the 'config' and 'service' options are mutually exclusive"), nil
+		}
 		args := []string{"env", "rm", fmt.Sprintf("%d", id)}
 		args = appendBoolFlag(args, r, "device", "--device")
 		args = appendBoolFlag(args, r, "service", "--service")
 		args = appendBoolFlag(args, r, "config", "--config")
-		args = appendBoolFlag(args, r, "yes", "--yes")
+		// --yes is always passed: without it the CLI falls to an interactive
+		// inquirer prompt, which cannot be answered over MCP (with stdin on
+		// /dev/null it crashes node outright). Every other destructive wrapper
+		// already hardcodes it; env-rm was the one holdout.
+		args = append(args, "--yes")
 		return runCmd(ctx, args)
 	})
 

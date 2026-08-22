@@ -297,9 +297,17 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "env-set",
 		map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet", "service": "api"},
 		"balena env set DEBUG 1 --fleet my-fleet --service api")
+	// env-rm — --yes is always passed (the CLI's confirm prompt cannot be
+	// answered over MCP); selector booleans disambiguate the variable type.
 	expect(t, c, ctx, "env-rm",
-		map[string]any{"id": float64(42), "yes": true},
+		map[string]any{"id": float64(42)},
 		"balena env rm 42 --yes")
+	expect(t, c, ctx, "env-rm",
+		map[string]any{"id": float64(42), "device": true},
+		"balena env rm 42 --device --yes")
+	expect(t, c, ctx, "env-rm",
+		map[string]any{"id": float64(42), "config": true},
+		"balena env rm 42 --config --yes")
 
 	// Optional-arg branches: device-pin and fleet-pin both accept an optional
 	// release; omitting it should produce just the verb + identifier.
@@ -487,7 +495,7 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"release-finalize", map[string]any{"id": "123"}},
 		{"tag-set", map[string]any{"key": "owner", "fleet": "my-fleet"}},
 		{"tag-rm", map[string]any{"key": "owner", "fleet": "my-fleet"}},
-		{"env-set", map[string]any{"name": "DEBUG", "fleet": "my-fleet"}},
+		{"env-set", map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet"}},
 		{"env-rm", map[string]any{"id": float64(42)}},
 		{"env-rename", map[string]any{"id": float64(42), "value": "x"}},
 		{"release-invalidate", map[string]any{"id": "abc123"}},
@@ -694,6 +702,24 @@ func TestErrors(t *testing.T) {
 	// env-rename: missing numeric id hits the RequireInt error branch.
 	expectError(t, c, ctx, "env-rename",
 		map[string]any{"value": "x"}, "id")
+	// env-rm: same RequireInt branch, plus the config/service exclusion that
+	// env-rename has always carried.
+	expectError(t, c, ctx, "env-rm", map[string]any{}, "id")
+	expectError(t, c, ctx, "env-rm",
+		map[string]any{"id": float64(42), "config": true, "service": true},
+		"mutually exclusive")
+	// env-set: value is required and non-empty — an omitted/empty value would
+	// make the CLI copy the SERVER's own env var of that name to balenaCloud.
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "fleet": "my-fleet"}, "non-empty 'value'")
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "value": "", "fleet": "my-fleet"},
+		"non-empty 'value'")
+	// release-info: composition output is always YAML, so json cannot be
+	// combined with it.
+	expectError(t, c, ctx, "release-info",
+		map[string]any{"id": "abc123", "composition": true, "json": true},
+		"mutually exclusive")
 
 	// tag-list / tag-set / tag-rm — exactly-one-of fleet|device|release
 	expectError(t, c, ctx, "tag-list", nil, "one of")
