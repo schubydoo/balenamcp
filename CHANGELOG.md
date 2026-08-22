@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0](https://github.com/schubydoo/balenamcp/compare/v1.2.2...v1.3.0) (2026-08-22)
+
+
+### Features
+
+* wrap device identify, rename, note and public-url ([#78](https://github.com/schubydoo/balenamcp/issues/78)) ([aa00a2a](https://github.com/schubydoo/balenamcp/commit/aa00a2a4a4830bc0b6c24cbc98d5ad06d4ddb840)), closes [#55](https://github.com/schubydoo/balenamcp/issues/55)
+* wrap device os-update ([#79](https://github.com/schubydoo/balenamcp/issues/79)) ([a0cbdda](https://github.com/schubydoo/balenamcp/commit/a0cbddad4d808f1612ebdbc28203bb18b3f5e01e)), closes [#52](https://github.com/schubydoo/balenamcp/issues/52)
+* wrap device rm, deactivate, move and register ([#80](https://github.com/schubydoo/balenamcp/issues/80)) ([9835011](https://github.com/schubydoo/balenamcp/commit/983501175b2f5cf05b6a96954b3d64cda7ed4020))
+* wrap device start-service and stop-service ([#76](https://github.com/schubydoo/balenamcp/issues/76)) ([dac82d0](https://github.com/schubydoo/balenamcp/commit/dac82d0c575836cba405b37a887d124cf550a9e7)), closes [#54](https://github.com/schubydoo/balenamcp/issues/54)
+* wrap fleet create and fleet rename ([#75](https://github.com/schubydoo/balenamcp/issues/75)) ([420370d](https://github.com/schubydoo/balenamcp/commit/420370d448dd118e4e69b2614f50b14b40a0cc19)), closes [#53](https://github.com/schubydoo/balenamcp/issues/53)
+* wrap release-asset download, upload and delete behind a path allow-list ([#81](https://github.com/schubydoo/balenamcp/issues/81)) ([2065af8](https://github.com/schubydoo/balenamcp/commit/2065af8f1e09a29bbb679e8e3dd068f1801f4606))
+* wrap ssh-key info, add and rm ([#82](https://github.com/schubydoo/balenamcp/issues/82)) ([fb15eea](https://github.com/schubydoo/balenamcp/commit/fb15eea05f62faa6f8ce0868f6a4b4cf9005b0e8)), closes [#58](https://github.com/schubydoo/balenamcp/issues/58)
+
+
+### Bug Fixes
+
+* annotate device-identify read-only instead of adding a class for it ([#84](https://github.com/schubydoo/balenamcp/issues/84)) ([8080f5f](https://github.com/schubydoo/balenamcp/commit/8080f5f9aa55a77e1cfcf4de00efaff3b146b390))
+* close the four CLI-interaction bugs found by the parity audit ([#86](https://github.com/schubydoo/balenamcp/issues/86)) ([63ae625](https://github.com/schubydoo/balenamcp/commit/63ae625d6dc059becbf3ac44b76cec50ec183916))
+* constrain device-purge and device-restart to one device per call ([#77](https://github.com/schubydoo/balenamcp/issues/77)) ([a3ffd48](https://github.com/schubydoo/balenamcp/commit/a3ffd48962a2fb5f5c816ea99ac1b67a6d3f12c8)), closes [#54](https://github.com/schubydoo/balenamcp/issues/54)
+* **deps:** update module github.com/stretchr/testify to v1.12.1 ([#71](https://github.com/schubydoo/balenamcp/issues/71)) ([21d0db7](https://github.com/schubydoo/balenamcp/commit/21d0db76a5c72a6c2c2af45b8005a29a3840307e))
+* stop annotating device-identify as destructive ([#83](https://github.com/schubydoo/balenamcp/issues/83)) ([a7cd969](https://github.com/schubydoo/balenamcp/commit/a7cd9695816cf96f98c0b64509e2422cf424cab7))
+
 ## [1.2.2](https://github.com/schubydoo/balenamcp/compare/v1.2.1...v1.2.2) (2026-08-18)
 
 
