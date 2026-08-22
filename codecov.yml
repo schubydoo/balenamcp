@@ -1,0 +1,108 @@
+# Codecov config for balenamcp.
+#
+# Coverage is REPORTED here for visibility — PR comment, trend graph, and a
+# per-surface breakdown of the three things this server advertises (tools,
+# prompts, resources). The REAL gate stays in .github/workflows/ci.yml: the
+# `coverage (>= 80%)` job enforces COVERAGE_MIN on a single Ubuntu cell and is
+# a required check. Codecov is not, and nothing here can block a merge unless
+# someone adds `codecov/patch` to branch protection on purpose.
+#
+# Coverage uploads from ONE cell — the cross-package `-coverpkg=./...` run in
+# the coverage job. The unit tests live in `package main` while most of the
+# code lives in `package server`, so a per-package profile understates reality
+# badly (51% vs 96%); `-coverpkg` is what makes the number meaningful. Because
+# there is a single uploader, coverage FLAGS, carryforward and report-merging
+# are all unnecessary.
+#
+# TEST RESULTS are separate and DO carry flags. The `test` job runs on Ubuntu,
+# macOS and Windows and uploads a gotestsum-produced junit.xml per leg tagged
+# with `flags: <Linux|macOS|Windows>`, so Test Analytics breaks flaky and slow
+# tests out per platform. That is the axis balenamcp actually varies on —
+# path handling in the BALENAMCP_ASSET_DIR confinement differs per OS (macOS
+# maps /var to /private/var, Windows expands 8.3 short names), and the Windows
+# leg is consistently the slowest. Those flags tag test results, not coverage,
+# so the single-cell coverage story above is unchanged.
+#
+# Go note: Codecov ingests `go test -coverprofile` output (coverage.out)
+# directly — no lcov/cobertura conversion step.
+#
+# Validate before deploying changes:
+#   curl -X POST --data-binary @codecov.yml https://api.codecov.io/validate
+
+codecov:
+  # ci.yml uploads coverage even when tests FAIL (the `!cancelled()` guard on
+  # the upload step), deliberately: a coverage drop should surface exactly when
+  # a change breaks something. So don't gate the Codecov status on CI passing,
+  # and don't wait for CI before reporting.
+  require_ci_to_pass: false
+  notify:
+    wait_for_ci: false
+    # One coverage upload cell, so report as soon as it lands rather than
+    # waiting for a second uploader that does not exist. Bump if that changes.
+    after_n_builds: 1
+
+coverage:
+  precision: 2
+  round: down # a floor rounds down, matching the CI COVERAGE_MIN gate
+  range: "80...95" # red->green band; the project sits ~96%
+  status:
+    project:
+      default:
+        target: 80% # mirrors the ci.yml COVERAGE_MIN floor
+        threshold: 1% # tolerate sub-1% drift before flagging
+        informational: true # nudge only — ci.yml is the source of truth
+    patch:
+      default:
+        # New-code (diff) coverage. 90% sits well above the 80% floor but below
+        # the ~96-100% patch coverage the recent tool-wrapping PRs actually hit,
+        # so it flags under-tested new code without going chronically red.
+        target: 90%
+        threshold: 0% # no slack — new code meets the target or the status is red
+        informational: false # a real traffic light, still a non-required check
+        if_not_found: success # docs-only PRs upload no diff; don't block them
+
+# Per-line PR annotations are mostly visual clutter here; the comment and the
+# dashboard carry the signal.
+github_checks:
+  annotations: false
+
+comment:
+  # No coverage flags are uploaded (single cell), so drop the empty "flags"
+  # panel and show the per-component breakdown instead. The per-OS flags on the
+  # test-results upload do not appear here — Test Analytics renders separately.
+  layout: "condensed_header, diff, components, files"
+  behavior: default # update the existing comment in place
+  require_changes: true # only comment when coverage actually moves
+  hide_project_coverage: false
+
+# Per-surface coverage breakdown in the dashboard and PR comment. No `statuses`
+# are defined, so components add VISIBILITY only — they do not create extra
+# per-component PR status checks.
+#
+# The split mirrors the three surfaces the server advertises and the file
+# layout in CLAUDE.md, so "which surface is thin?" is answerable at a glance.
+# Every production .go file appears here exactly once; keep it that way as
+# files are added.
+component_management:
+  individual_components:
+    - component_id: tools
+      name: tools (registration + handlers)
+      paths:
+        - server/setup.go
+    - component_id: prompts
+      name: prompts (guided workflows)
+      paths:
+        - server/prompts.go
+    - component_id: resources
+      name: resources (balena:// documents)
+      paths:
+        - server/resources.go
+    - component_id: entrypoint
+      name: entrypoint & package docs
+      paths:
+        - main.go
+        # Declaration-only package docs: no statements, so Codecov never
+        # reports them and their absence could not show up as a coverage gap.
+        # Listed anyway so every production file is accounted for exactly once.
+        - doc.go
+        - server/doc.go
