@@ -329,6 +329,32 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// device estate: rm / deactivate always pass --yes, move always sends
+	// --fleet, register builds its optional flags.
+	expect(t, c, ctx, "device-rm",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device rm 7cf02a6 --yes")
+	expect(t, c, ctx, "device-deactivate",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device deactivate 7cf02a6 --yes")
+	expect(t, c, ctx, "device-move",
+		map[string]any{"uuid": "7cf02a6", "fleet": "myorg/newfleet"},
+		"balena device move 7cf02a6 --fleet myorg/newfleet")
+	expect(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet"},
+		"balena device register myorg/myfleet")
+	// --deviceType is camelCase upstream, unlike almost every other CLI flag.
+	expect(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet", "uuid": "7cf02a6", "device_type": "raspberrypi4-64"},
+		"balena device register myorg/myfleet --uuid 7cf02a6 --deviceType raspberrypi4-64")
+	// each optional flag independently
+	expect(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet", "uuid": "7cf02a6"},
+		"balena device register myorg/myfleet --uuid 7cf02a6")
+	expect(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet", "device_type": "raspberrypi4-64"},
+		"balena device register myorg/myfleet --deviceType raspberrypi4-64")
+
 	// device-os-update: --version is always sent (omitting it makes the CLI
 	// render an interactive picker) and --yes is always sent (it confirms
 	// twice, once more for takeover updates).
@@ -457,6 +483,10 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"device-rm", map[string]any{"uuid": "7cf02a6"}},
+		{"device-deactivate", map[string]any{"uuid": "7cf02a6"}},
+		{"device-move", map[string]any{"uuid": "7cf02a6", "fleet": "myorg/newfleet"}},
+		{"device-register", map[string]any{"fleet": "myorg/myfleet"}},
 		{"device-os-update", map[string]any{"uuid": "7cf02a6", "version": "2.101.7"}},
 		{"device-identify", map[string]any{"uuid": "7cf02a6"}},
 		{"device-rename", map[string]any{"uuid": "7cf02a6", "new_name": "MyPi"}},
@@ -539,6 +569,29 @@ func TestErrors(t *testing.T) {
 		map[string]any{"name": "MyFleet"}, "organization")
 	expectError(t, c, ctx, "fleet-create",
 		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// The one-device-per-call guard covers the estate tools too.
+	expectError(t, c, ctx, "device-rm",
+		map[string]any{"uuid": "7cf02a6,dc39e52"}, "single target per call")
+	expectError(t, c, ctx, "device-deactivate",
+		map[string]any{"uuid": "7cf02a6,dc39e52"}, "single target per call")
+	expectError(t, c, ctx, "device-move",
+		map[string]any{"uuid": "7cf02a6,dc39e52", "fleet": "myorg/newfleet"},
+		"single target per call")
+	// device-move: the target fleet is required, or the CLI prompts.
+	expectError(t, c, ctx, "device-move",
+		map[string]any{"uuid": "7cf02a6"}, "fleet")
+	expectError(t, c, ctx, "device-move",
+		map[string]any{"uuid": "7cf02a6", "fleet": "-f"},
+		"cannot start with '-'")
+	// device-register: both optional identifiers are flag-shape guarded, and
+	// each is its own branch.
+	expectError(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet", "uuid": "-u"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-register",
+		map[string]any{"fleet": "myorg/myfleet", "device_type": "-t"},
+		"cannot start with '-'")
+
 	// device-os-update: version is required, or the CLI prompts.
 	expectError(t, c, ctx, "device-os-update",
 		map[string]any{"uuid": "7cf02a6"}, "version")

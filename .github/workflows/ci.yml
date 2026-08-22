@@ -130,6 +130,7 @@ jobs:
             device-start-service device-stop-service
             device-identify device-rename device-note device-public-url-set
             device-os-update
+            device-rm device-deactivate device-move device-register
             fleet-track-latest fleet-purge fleet-restart fleet-rm
             fleet-create fleet-rename
             organization-create organization-rename organization-rm api-key-revoke

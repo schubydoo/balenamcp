@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **34 of the 54 tools change state on real devices or in balenaCloud.** A
+> **38 of the 58 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -237,6 +237,10 @@ nothing balenamcp-specific about the wiring.
 > | `device-start-service` | Start a stopped service container | yes (`device-stop-service`) |
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** (one device per call) | **no — data is gone** |
+> | `device-rm` | **Permanently remove a device from balenaCloud** (passes `--yes`) | **no** |
+> | `device-deactivate` | Release a device from its fleet. On paid plans this **charges a one-month fee**; free-tier accounts are not charged (passes `--yes`) | yes (the device re-registers when it comes online) |
+> | `device-move` | Move a device to another fleet | yes (move it back) |
+> | `device-register` | Register a new device with a fleet | yes (`device-rm`) |
 > | `device-os-update` | **Host OS update.** A takeover target re-partitions the disk, **erasing all data** | **no — takeover updates cannot be rolled back** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
@@ -312,6 +316,11 @@ sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
 value containing a comma on `device-purge`, `device-restart`,
 `device-start-service` and `device-stop-service` (on both the device **and**
 the service argument), and asks the agent to loop instead.
+
+`device-move` requires `fleet` and `device-rm` / `device-deactivate` always
+pass `--yes`, so `guardDestructive` (and `BALENAMCP_REQUIRE_CONFIRM`) is the
+only confirmation layer on device removal. `device-register` takes
+`device_type`, which reaches the CLI as its camelCase `--deviceType` flag.
 
 `device-os-update` requires `version`. Omitting it makes the CLI render an
 interactive version picker, and `--include-draft` is not exposed at all —
