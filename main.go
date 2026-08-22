@@ -12,8 +12,7 @@ import (
 
 // setup parses argv, applies flag state to the server config, and returns the
 // wired MCP server. Split from main so the flag-parse → config → SetupServer
-// path is testable in-process; main itself only adds the stdio serve loop,
-// which cannot run under `go test`.
+// path is testable in-process.
 func setup(args []string, stderr io.Writer) (*mcpserver.MCPServer, error) {
 	fs := flag.NewFlagSet("balenamcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -26,14 +25,20 @@ func setup(args []string, stderr io.Writer) (*mcpserver.MCPServer, error) {
 	return server.SetupServer(), nil
 }
 
+// serve runs the stdio loop until the client closes stdin. Split from main so
+// the banner and the error-reporting branch are testable by swapping
+// os.Stdin (which ServeStdio reads directly) for a pipe.
+func serve(srv *mcpserver.MCPServer, stderr io.Writer) {
+	fmt.Fprintf(stderr, "Starting BalenaMCP server...\n")
+	if err := mcpserver.ServeStdio(srv); err != nil {
+		fmt.Fprintf(stderr, "Server error: %v\n", err)
+	}
+}
+
 func main() {
 	srv, err := setup(os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2) // flag package already printed the parse error + usage
 	}
-
-	fmt.Fprintf(os.Stderr, "Starting BalenaMCP server...\n")
-	if err := mcpserver.ServeStdio(srv); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-	}
+	serve(srv, os.Stderr)
 }

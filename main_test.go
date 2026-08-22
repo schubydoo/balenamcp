@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1129,8 +1130,7 @@ func TestResourceRegistrationWiring(t *testing.T) {
 }
 
 // TestSetupFlagParsing covers the flag-parse → config → SetupServer path that
-// main() delegates to. main itself is a two-line shim around ServeStdio,
-// which cannot run under go test.
+// main() delegates to.
 func TestSetupFlagParsing(t *testing.T) {
 	origDry := server.Config.DryRun
 	t.Cleanup(func() { server.Config.DryRun = origDry })
@@ -1151,4 +1151,43 @@ func TestSetupFlagParsing(t *testing.T) {
 	_, err = setup([]string{"-no-such-flag"}, &buf)
 	require.Error(t, err)
 	assert.Contains(t, buf.String(), "no-such-flag")
+}
+
+// TestServe covers the stdio serve shim. ServeStdio reads os.Stdin directly,
+// so the test swaps it for a pipe: closing the write end immediately is a
+// clean client disconnect (EOF), and handing it an already-closed file forces
+// the read error that the "Server error" branch reports. Only main's
+// os.Exit(2) line remains uncoverable in-process.
+func TestServe(t *testing.T) {
+	origIn := os.Stdin
+	t.Cleanup(func() { os.Stdin = origIn })
+
+	srv, err := setup([]string{"-dry-run"}, io.Discard)
+	require.NoError(t, err)
+
+	t.Run("clean shutdown on stdin EOF", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close()) // immediate EOF = client hung up
+		os.Stdin = r
+
+		var stderr strings.Builder
+		serve(srv, &stderr)
+		assert.Contains(t, stderr.String(), "Starting BalenaMCP server...")
+		assert.NotContains(t, stderr.String(), "Server error",
+			"a client closing stdin is a normal shutdown, not an error")
+	})
+
+	t.Run("read failure is reported", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		require.NoError(t, r.Close()) // already closed → read error, not EOF
+		os.Stdin = r
+
+		var stderr strings.Builder
+		serve(srv, &stderr)
+		assert.Contains(t, stderr.String(), "Server error",
+			"a non-EOF stdin failure must be surfaced on stderr")
+	})
 }
