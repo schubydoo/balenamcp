@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **29 of the 48 tools change state on real devices or in balenaCloud.** A
+> **33 of the 53 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -239,6 +239,10 @@ nothing balenamcp-specific about the wiring.
 > | `device-purge` | **Wipe `/data` on the device** (one device per call) | **no — data is gone** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
+> | `device-public-url-set` | **Expose a device's service on a public, unauthenticated URL** (or disable it) | yes (disable again) |
+> | `device-identify` | Blink the device's ACT LED to locate it | n/a — the LED stops on its own |
+> | `device-rename` | Rename a device | yes (rename again) |
+> | `device-note` | Set a device's note, **replacing** any existing note | no — the previous note is not kept |
 > | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
 > | `device-track-fleet` | Drop a device's pin and resume tracking the fleet's release | yes (`device-pin` again) |
 > | `fleet-pin` | Pin a fleet to a specific release | yes (`fleet-track-latest` or re-pin) |
@@ -268,7 +272,7 @@ nothing balenamcp-specific about the wiring.
 
 ### Read-only
 
-The remaining 19 tools are read-only — they shell out to balena with no
+The remaining 20 tools are read-only — they shell out to balena with no
 state change. Safe to call without confirmation.
 
 | Tool | Purpose |
@@ -292,6 +296,7 @@ state change. Safe to call without confirmation.
 | `api-key-list` | balenaCloud API keys |
 | `device-detect` | Scan the local network (LAN) for balenaOS devices |
 | `device-local-mode-get` | Report whether local mode is enabled on a device |
+| `device-public-url` | Print a device's public URL, or with `status: true` report whether it is enabled. Turn it on or off with `device-public-url-set`. |
 
 ### Argument constraints
 
@@ -306,6 +311,13 @@ sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
 value containing a comma on `device-purge`, `device-restart`,
 `device-start-service` and `device-stop-service` (on both the device **and**
 the service argument), and asks the agent to loop instead.
+
+`device-note` requires its note text: the balena CLI documents that an omitted
+note is read from stdin, but the v25.2.5 implementation instead writes an empty
+string, silently **clearing** the note. The text also cannot start with `-`,
+because it reaches the CLI as a positional argument and would be parsed as a
+flag. `device-rename` requires `new_name` for the usual prompt-avoidance
+reason.
 
 `api-key-revoke` is the sole exception: its CLI command is inherently
 list-shaped (`balena api-key revoke 123,456`) and its targets are credentials,

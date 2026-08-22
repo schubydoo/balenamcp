@@ -517,6 +517,24 @@ func registerReadOnlyDevices(srv *server.MCPServer) {
 		return runCmd(ctx, args)
 	})
 
+	// device-public-url ----------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-public-url",
+		mcp.WithDescription("Read a device's public device URL, or check whether the URL is enabled. Read-only: use device-public-url-set to turn the URL on or off."),
+		readOnly,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+		mcp.WithBoolean("status",
+			mcp.Description("true to report whether the public URL is enabled instead of printing the URL itself.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := requireIdentifier(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		args := []string{"device", "public-url", uuid}
+		args = appendBoolFlag(args, r, "status", "--status")
+		return runCmd(ctx, args)
+	})
+
 	// device-logs ----------------------------------------------------------
 	//
 	// `tail` is deliberately NOT exposed. The balena CLI supports --tail to
@@ -759,6 +777,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingFleetLifecycle(srv)
 	registerMutatingFleetCreation(srv)
 	registerMutatingServices(srv)
+	registerMutatingDeviceIdentity(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1246,6 +1265,114 @@ func registerMutatingFleetLifecycle(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
+	})
+}
+
+// registerMutatingDeviceIdentity: device-identify, device-rename, device-note,
+// device-public-url-set. Field-work tools that label, locate or expose a single
+// device. The read side of public-url lives with the other read-only device
+// tools as device-public-url.
+//
+// device-identify only blinks an LED, which is as close to harmless as a device
+// operation gets. It still carries the destructive annotation pair: the server
+// treats "acts on the device" as the dividing line rather than "causes lasting
+// change", and every tool must be exactly one of read-only or destructive.
+func registerMutatingDeviceIdentity(srv *server.MCPServer) {
+	// device-identify ------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-identify",
+		mcp.WithDescription("Make a device physically identify itself by blinking its ACT LED (Raspberry Pi). Useful for locating one board among many on site. The device must be online or the CLI reports it as unreachable."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "identify", uuid})
+	})
+
+	// device-rename --------------------------------------------------------
+	srv.AddTool(mcp.NewTool("device-rename",
+		mcp.WithDescription("Rename a device. Requires the new name (the CLI would otherwise block on an interactive prompt). Reversible by renaming again."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+		mcp.WithString("new_name", mcp.Required(),
+			mcp.Description("New name for the device.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		newName, errRes := requireIdentifier(r, "new_name", "new device name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"device", "rename", uuid, newName})
+	})
+
+	// device-note ----------------------------------------------------------
+	//
+	// The CLI's argument shape is inverted relative to every other device
+	// command: the note is positional and the device is a --device flag. Both
+	// are required here. Upstream documents that an omitted note is read from
+	// stdin, but the v25.2.5 implementation does not do that — it writes
+	// `params.note ?? ''`, silently CLEARING the note. Requiring the argument
+	// avoids relying on either behavior.
+	srv.AddTool(mcp.NewTool("device-note",
+		mcp.WithDescription("Set or replace a device's note (free-text annotation). Replaces any existing note rather than appending. Read notes back with device-info. Note text cannot start with '-', which the CLI would parse as a flag."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+		mcp.WithString("note", mcp.Required(),
+			mcp.Description("Note content. Replaces the existing note. Cannot be empty or start with '-'.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		// The note is free-form text, but it lands in argv as a positional, so
+		// a leading dash would be parsed as a flag. Rejecting it is clearer
+		// than letting the CLI fail on an unknown flag.
+		note, errRes := requireIdentifier(r, "note", "note")
+		if errRes != nil {
+			return errRes, nil
+		}
+		if note == "" {
+			return mcp.NewToolResultError(
+				"note is empty: pass the note text, or use device-info to read the current note"), nil
+		}
+		return runCmd(ctx, []string{"device", "note", note, "--device", uuid})
+	})
+
+	// device-public-url-set ------------------------------------------------
+	//
+	// Split from the read path so the reader can carry ReadOnlyHint honestly.
+	// The split also makes the CLI's three mutually exclusive flags
+	// unrepresentable: --status belongs to device-public-url, and this tool
+	// derives exactly one of --enable/--disable from a required bool.
+	srv.AddTool(mcp.NewTool("device-public-url-set",
+		mcp.WithDescription("Enable or disable a device's public device URL. Enabling EXPOSES the device's web service to the public internet at a guessable-by-nobody but unauthenticated URL — anyone holding the URL can reach the device. Read the current state with device-public-url."),
+		destructive,
+		mcp.WithString("uuid", mcp.Required(),
+			mcp.Description("Device UUID.")),
+		mcp.WithBoolean("enable", mcp.Required(),
+			mcp.Description("true to expose the device on a public URL, false to disable it.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes != nil {
+			return errRes, nil
+		}
+		enable, err := r.RequireBool("enable")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		flag := "--disable"
+		if enable {
+			flag = "--enable"
+		}
+		return runCmd(ctx, []string{"device", "public-url", uuid, flag})
 	})
 }
 

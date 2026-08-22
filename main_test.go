@@ -329,6 +329,35 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// device-public-url read path: bare form prints the URL, --status reports
+	// whether it is enabled.
+	expect(t, c, ctx, "device-public-url",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device public-url 7cf02a6")
+	expect(t, c, ctx, "device-public-url",
+		map[string]any{"uuid": "7cf02a6", "status": true},
+		"balena device public-url 7cf02a6 --status")
+
+	// field-work device tools. device-note's argument shape is inverted: the
+	// note is positional and the device is a flag.
+	expect(t, c, ctx, "device-identify",
+		map[string]any{"uuid": "7cf02a6"},
+		"balena device identify 7cf02a6")
+	expect(t, c, ctx, "device-rename",
+		map[string]any{"uuid": "7cf02a6", "new_name": "MyPi"},
+		"balena device rename 7cf02a6 MyPi")
+	expect(t, c, ctx, "device-note",
+		map[string]any{"uuid": "7cf02a6", "note": "swapped the SD card"},
+		"balena device note swapped the SD card --device 7cf02a6")
+	// enable/disable are derived from one required bool, so the CLI's three
+	// mutually exclusive flags cannot both be sent.
+	expect(t, c, ctx, "device-public-url-set",
+		map[string]any{"uuid": "7cf02a6", "enable": true},
+		"balena device public-url 7cf02a6 --enable")
+	expect(t, c, ctx, "device-public-url-set",
+		map[string]any{"uuid": "7cf02a6", "enable": false},
+		"balena device public-url 7cf02a6 --disable")
+
 	// per-service container control
 	expect(t, c, ctx, "device-start-service",
 		map[string]any{"uuid": "7cf02a6", "service": "myService"},
@@ -421,6 +450,10 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"device-identify", map[string]any{"uuid": "7cf02a6"}},
+		{"device-rename", map[string]any{"uuid": "7cf02a6", "new_name": "MyPi"}},
+		{"device-note", map[string]any{"uuid": "7cf02a6", "note": "hi"}},
+		{"device-public-url-set", map[string]any{"uuid": "7cf02a6", "enable": true}},
 		{"device-start-service", map[string]any{"uuid": "7cf02a6", "service": "myService"}},
 		{"device-stop-service", map[string]any{"uuid": "7cf02a6", "service": "myService"}},
 		{"fleet-create", map[string]any{"name": "MyFleet", "organization": "myorg", "type": "raspberrypi4-64"}},
@@ -498,6 +531,29 @@ func TestErrors(t *testing.T) {
 		map[string]any{"name": "MyFleet"}, "organization")
 	expectError(t, c, ctx, "fleet-create",
 		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// device-rename / device-note / device-public-url-set: every argument the
+	// CLI would otherwise prompt for, infer, or misparse is required here.
+	expectError(t, c, ctx, "device-rename",
+		map[string]any{"uuid": "7cf02a6"}, "new_name")
+	expectError(t, c, ctx, "device-rename",
+		map[string]any{"uuid": "7cf02a6", "new_name": "-n"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-note",
+		map[string]any{"uuid": "7cf02a6"}, "note")
+	// a note is free-form text, but it lands in argv as a positional, so a
+	// leading dash would be parsed as a flag rather than content.
+	expectError(t, c, ctx, "device-note",
+		map[string]any{"uuid": "7cf02a6", "note": "-- see ticket 12"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-note",
+		map[string]any{"uuid": "7cf02a6", "note": ""}, "note is empty")
+	expectError(t, c, ctx, "device-public-url-set",
+		map[string]any{"uuid": "7cf02a6"}, "enable")
+	expectError(t, c, ctx, "device-identify",
+		map[string]any{"uuid": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "device-public-url",
+		map[string]any{"uuid": "--help"}, "cannot start with '-'")
+
 	// The multi-target guard also covers the two tools that predated it.
 	// device-purge is the sharp one: without this, a single confirmation could
 	// wipe /data on every device in the list.

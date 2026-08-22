@@ -321,6 +321,10 @@ const gotchasDoc = "# balena CLI gotchas\n\n" +
 	"- Host OS is the default target. Remote **service-container** exec addressed by UUID is **not supported** by the balenaCloud backend; service containers only work for local/VPN-reachable devices (pass the service name as the second argument).\n\n" +
 	"## Logs\n" +
 	"- Use the `device-logs` tool for recent history. Streaming (`--tail`) is **not** supported over the MCP transport — it never returns and ties up the connection. For continuous monitoring run `balena device logs <uuid> --tail` directly in a terminal.\n\n" +
+	"## Device notes\n" +
+	"- `balena device note` inverts the usual shape: the note is **positional** and the device is a flag (`--device <uuid>`).\n" +
+	"- The help text says an omitted note is read from stdin. As of CLI v25.2.5 it is not — the command writes an empty string and **silently clears** the existing note. Always pass the text.\n" +
+	"- Setting a note **replaces** the previous one; there is no append. Read the current note with the `device-info` tool first if you need to keep it.\n\n" +
 	"## General\n" +
 	"- Every tool runs through `balena` with argv as a slice; identifiers must not start with `-`.\n" +
 	"- Destructive tools honor `BALENAMCP_REQUIRE_CONFIRM` — pass `confirm: true` when that gate is on.\n"
