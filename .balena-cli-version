@@ -3,7 +3,8 @@
 # This records the balena CLI version that balenamcp's wrapped command surface
 # (the argv every tool constructs) has been verified against. balena-cli is
 # shelled out at runtime, so it is neither a go.mod dependency nor a GitHub
-# Action `uses:` line — only a Renovate customManager (see renovate.json) sees
+# Action `uses:` line — only a Renovate customManager (in the shared
+# renovate-config preset that renovate.json extends) sees
 # this line. Renovate opens a `chore(deps)` PR whenever balena-cli publishes a
 # newer npm release; its PR body carries the upstream changelog.
 #

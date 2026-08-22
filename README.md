@@ -23,14 +23,15 @@ diagnosis), and **resources** (read-only fleet/device/release state you attach
 as context). See the [Tools](#tools), [Prompts](#prompts), and
 [Resources](#resources) sections below.
 
-This is a personal fork of [klutchell/balenamcp](https://github.com/klutchell/balenamcp)
+This is a personal fork of the original `klutchell/balenamcp` (since transferred to
+[balena-io-experimental/balenamcp](https://github.com/balena-io-experimental/balenamcp))
 brought up to date with the current balena CLI and the current `mark3labs/mcp-go`.
 
 ## Prerequisites
 
 - [`balena` CLI](https://github.com/balena-io/balena-cli) on `PATH`
 - An MCP-aware agent or IDE (Claude Code, Claude Desktop, Cursor, …)
-- Go 1.23+ (only if you're building from source — pre-built binaries don't require it)
+- Go 1.25+ (only if you're building from source — pre-built binaries don't require it; `go.mod` pins the exact toolchain)
 
 ## Install
 
@@ -98,7 +99,7 @@ in `$GOBIN` (default `$GOPATH/bin` or `~/go/bin`). For docs and package
 info: <https://pkg.go.dev/github.com/schubydoo/balenamcp>.
 
 `@latest` follows the most recent release; pin a specific version with
-`go install github.com/schubydoo/balenamcp@v0.1.0` if you'd rather not
+`go install github.com/schubydoo/balenamcp@v1.2.2` if you'd rather not
 auto-update.
 
 ### 3. Build from source
@@ -321,9 +322,10 @@ of `fleet` / `device`.
 several device commands and acts on every element, which would let a single
 call reach an unbounded number of devices behind one confirmation — most
 sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
-value containing a comma on `device-purge`, `device-restart`,
-`device-start-service` and `device-stop-service` (on both the device **and**
-the service argument), and asks the agent to loop instead.
+value containing a comma on `device-purge`, `device-restart`, `device-rm`,
+`device-deactivate`, `device-move`, `device-start-service` and
+`device-stop-service` (on both the device **and** the service argument where
+both exist), and asks the agent to loop instead.
 
 **Host filesystem access is opt-in.** `release-asset-download`,
 `release-asset-upload` and `ssh-key-add` are the only tools that read or write
@@ -339,11 +341,11 @@ out of it). `release-asset-delete` touches no local files and works either way.
 `release-asset-download` also requires `output`. The CLI would otherwise write
 to the server process's working directory, outside the configured root. An
 existing destination is an error unless `overwrite: true`, which stands in for
-the CLI's interactive overwrite prompt — that prompt would hang over MCP.
+the CLI's interactive overwrite prompt, which cannot be answered over MCP.
 
 `device-move` requires `fleet` and `device-rm` / `device-deactivate` always
-pass `--yes`, so `guardDestructive` (and `BALENAMCP_REQUIRE_CONFIRM`) is the
-only confirmation layer on device removal. `device-register` takes
+pass `--yes`, so the server-side confirm gate (`BALENAMCP_REQUIRE_CONFIRM`)
+is the only confirmation layer on device removal. `device-register` takes
 `device_type`, which reaches the CLI as its camelCase `--deviceType` flag.
 
 `device-os-update` requires `version`. Omitting it makes the CLI render an
@@ -368,7 +370,7 @@ not devices, so constraining it to one ID per call would buy no safety.
 `fleet-create` requires `organization` **and** `type`, even though the balena
 CLI treats both as optional: the CLI falls back to an interactive dropdown when
 either is missing and the account has more than one candidate, and an
-interactive prompt over MCP is a hang, not a question. The same reasoning makes
+interactive prompt over MCP cannot be answered — the call fails. The same reasoning makes
 `new_name` mandatory on `fleet-rename`. Use `organization-list` and
 `device-type-list` to discover valid values.
 
@@ -467,13 +469,17 @@ BALENA_LIVE_RELEASE_ALT=<other-commit> \
   go test -tags=integration -v -count=1 -run TestLiveSweep .
 ```
 
-Irreversible sub-tests (`device-purge`, `device-shutdown`, `release-finalize`)
-gate on additional `BALENA_LIVE_ALLOW_*` opt-in env vars and skip by default.
+The `device-purge` and `device-shutdown` sub-tests gate on additional
+`BALENA_LIVE_ALLOW_PURGE` / `BALENA_LIVE_ALLOW_SHUTDOWN` opt-in env vars and
+skip by default; the `release-finalize` sub-test always runs but exercises
+only its error branch.
 
 Layout:
 
 - `main.go` — entry point, flag parsing, stdio transport
 - `server/setup.go` — all tool definitions
+- `server/prompts.go` — guided workflow prompts
+- `server/resources.go` — `balena://` resource documents
 - `main_test.go` — in-process MCP client driving every tool in dry-run mode
 - `livetest_test.go` — build-tagged (`integration`) end-to-end sweep against
   real balenaCloud, opt-in via env vars
@@ -486,7 +492,9 @@ construct. The dry-run tests assert what we *send*, not what the current CLI
 *accepts*, so drift is caught two ways:
 
 - **`.balena-cli-version`** records the CLI version the wrapped command surface
-  has been verified against. A Renovate `customManager` (see `renovate.json`)
+  has been verified against. A Renovate `customManager` (defined in the shared
+  [renovate-config](https://github.com/schubydoo/renovate-config) preset that
+  `renovate.json` extends)
   watches the `balena-cli` npm package and opens a `chore(deps)` PR — with the
   upstream changelog attached — whenever a newer version ships. Review that PR
   for parameter drift and merge it only once the new version is confirmed
@@ -500,7 +508,7 @@ The hard gate is the `coverage (>= 80%)` job in `.github/workflows/ci.yml`,
 which enforces `COVERAGE_MIN` on a single Ubuntu cell and is a required check.
 It runs with `-coverpkg=./...` deliberately: the tests live in `package main`
 while most of the code lives in `package server`, so a per-package profile
-reads ~51% against a real ~96%.
+reads ~46% against a real ~96%.
 
 [Codecov](https://codecov.io/gh/schubydoo/balenamcp) sits alongside it for
 visibility only — PR comments, trend graphs and a per-surface breakdown of
@@ -556,7 +564,7 @@ Logs land wherever the MCP host writes them:
 | Claude Desktop, Windows | `%APPDATA%\Claude\logs\mcp-server-balena.log` |
 | Claude Desktop, Linux | `~/.config/Claude/logs/mcp-server-balena.log` |
 | Claude Code | `claude --mcp-debug` enables verbose MCP logging to the current session; persistent logs live in `~/.claude/projects/<encoded-cwd>/` |
-| Cursor / Continue / others | Check each client's own log dir; the server itself writes only its startup line to stderr |
+| Cursor / Continue / others | Check each client's own log dir; the server writes its startup line, config warnings, and (in `-dry-run`) one line per call to stderr |
 
 ### Common errors
 

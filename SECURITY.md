@@ -14,8 +14,8 @@ the report and I'll work with you on disclosure timing.
 
 Please **do not** open a public GitHub issue for security reports. If
 GitHub's private flow is unavailable to you for some reason, email
-`schubydoo@users.noreply.github.com` with a description and we'll move it
-to the right channel.
+`schuuby@proton.me` with a description and we'll move it to the right
+channel.
 
 ## In scope
 
@@ -24,6 +24,10 @@ Vulnerabilities in the MCP server itself, including:
 - The tool dispatch path in `server/setup.go` — argument validation,
   command construction, the destructive-tool confirmation gate
   (`BALENAMCP_REQUIRE_CONFIRM`), the `executeCommand` subprocess wrapper
+- The host-filesystem confinement boundary (`BALENAMCP_ASSET_DIR` /
+  `resolveAssetPath`) — path traversal, symlink escape, or any way to make
+  the release-asset / ssh-key-add tools read or write outside the
+  configured directory
 - The MCP transport / stdio handling
 - The build & release pipeline (`.github/workflows/`) — anything that
   could let a malicious PR exfiltrate a secret or tamper with the

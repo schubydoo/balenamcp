@@ -26,9 +26,10 @@ on:
       - go.sum
       - .github/workflows/mutation-pr.yml
 
+# No pull-requests permission: every output goes to $GITHUB_STEP_SUMMARY,
+# nothing posts a PR comment.
 permissions:
   contents: read
-  pull-requests: write # for posting the summary comment
 
 concurrency:
   group: mutation-pr-${{ github.event.pull_request.number }}

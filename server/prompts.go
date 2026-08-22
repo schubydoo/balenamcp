@@ -82,7 +82,7 @@ func registerPrompts(srv *server.MCPServer) {
 
 	srv.AddPrompt(mcp.NewPrompt("compare-releases",
 		mcp.WithPromptDescription(
-			"Compare two releases: per-service image-size deltas, composition "+
+			"Compare two releases: metadata and tag deltas, composition "+
 				"differences, and asset changes."),
 		mcp.WithArgument("release_a", mcp.RequiredArgument(),
 			mcp.ArgumentDescription("First release commit or numeric ID (the baseline).")),
@@ -287,15 +287,15 @@ func handleAuditConfig(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPro
 
 const compareReleasesTemplate = `Compare two balena releases, %[1]s and %[2]s, using the balenamcp tools, and report the differences.
 
-1. Call release-info with id=%[1]s and json=true, then with id=%[2]s and json=true. Capture each release's services and their image sizes, status, and creation date.
-2. Call release-info with id=%[1]s and composition=true, then id=%[2]s and composition=true, to capture each release's docker-compose composition.
+1. Call release-info with id=%[1]s and json=true, then with id=%[2]s and json=true. Capture each release's status, semver/version, creation date, and tags. (This payload does NOT include per-service image sizes — the balena CLI's JSON release view carries release metadata and tags only, so do not go looking for size fields or invent them.)
+2. Call release-info with id=%[1]s and composition=true, then id=%[2]s and composition=true, to capture each release's docker-compose composition. Do not combine composition with json — the composition is always emitted as YAML.
 3. Call release-asset-list with id=%[1]s, then id=%[2]s, to capture attached binary assets and their sizes.
 
 Then report:
-- Per-service image-size deltas: which service images grew or shrank between %[1]s and %[2]s and by how much, plus the net total size change.
+- Metadata differences: status, version, creation date, and tag changes between %[1]s and %[2]s.
 - Composition differences: services added or removed, image/tag changes, and changed environment or label entries.
-- Asset differences: assets added, removed, or changed in size.
-- A one-line summary (e.g. "%[2]s is ~40 MB larger than %[1]s, driven by the <service> image").
+- Asset differences: assets added, removed, or changed in size (assets are the only artifacts these tools report sizes for).
+- A one-line summary of what changed and, if nothing meaningful differs, say so plainly.
 
 Read-only — make no changes.`
 
