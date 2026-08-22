@@ -436,8 +436,20 @@ func resolveAssetPath(raw, what string) (string, *mcp.CallToolResult) {
 		return "", mcp.NewToolResultError(fmt.Sprintf(
 			"%q is not a valid %s: paths must be relative to BALENAMCP_ASSET_DIR, not absolute", raw, what))
 	}
-	full := filepath.Join(root, raw)
-	if !withinRoot(root, full) {
+	// Canonicalize the root here rather than trusting the caller to have done
+	// it. loadAssetDirFromEnv already resolves it, but the containment checks
+	// below compare against a symlink-resolved path, so both sides must be in
+	// the same form or every call fails as a bogus symlink escape. Platforms
+	// rewrite paths more than you would expect: macOS maps /var to
+	// /private/var, and Windows expands 8.3 short names (RUNNER~1 ->
+	// runneradmin).
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", mcp.NewToolResultError(fmt.Sprintf(
+			"BALENAMCP_ASSET_DIR (%q) cannot be resolved: %v", root, err))
+	}
+	full := filepath.Join(realRoot, raw)
+	if !withinRoot(realRoot, full) {
 		return "", mcp.NewToolResultError(fmt.Sprintf(
 			"%q escapes BALENAMCP_ASSET_DIR: %s must stay inside the configured directory", raw, what))
 	}
@@ -446,7 +458,7 @@ func resolveAssetPath(raw, what string) (string, *mcp.CallToolResult) {
 		return "", mcp.NewToolResultError(fmt.Sprintf(
 			"%q cannot be resolved: %v", raw, err))
 	}
-	if !withinRoot(root, real) {
+	if !withinRoot(realRoot, real) {
 		return "", mcp.NewToolResultError(fmt.Sprintf(
 			"%q resolves outside BALENAMCP_ASSET_DIR through a symbolic link", raw))
 	}

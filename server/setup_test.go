@@ -319,13 +319,20 @@ func TestResolveAssetPath(t *testing.T) {
 	Config.AssetDir = root
 	t.Cleanup(func() { Config.AssetDir = "" })
 
+	// resolveAssetPath canonicalizes the root, so expectations must too:
+	// macOS maps /var to /private/var and Windows expands 8.3 short names.
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// a path that does not exist yet still resolves — the download case.
 	got, errRes := resolveAssetPath("sub/new.bin", "output path")
 	if errRes != nil {
 		t.Fatalf("unexpected error: %v", errRes)
 	}
-	if got != filepath.Join(root, "sub", "new.bin") {
-		t.Errorf("got %q", got)
+	if got != filepath.Join(canonical, "sub", "new.bin") {
+		t.Errorf("got %q, want %q", got, filepath.Join(canonical, "sub", "new.bin"))
 	}
 
 	for _, tc := range []struct{ name, in, wantErrLike string }{

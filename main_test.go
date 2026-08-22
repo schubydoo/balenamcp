@@ -786,6 +786,12 @@ func TestReleaseAssetTools(t *testing.T) {
 	t.Setenv("BALENAMCP_ASSET_DIR", root)
 	c, ctx := newTestClient(t)
 
+	// Expectations must use the canonical form of the root: macOS resolves
+	// /var to /private/var and Windows expands 8.3 short names, so the argv
+	// the server builds will not match a raw t.TempDir() string.
+	canonical, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
 	// delete is a pure cloud call and always passes --yes.
 	expect(t, c, ctx, "release-asset-delete",
 		map[string]any{"release": "abc123", "key": "config.json"},
@@ -795,15 +801,15 @@ func TestReleaseAssetTools(t *testing.T) {
 	// when asked.
 	expect(t, c, ctx, "release-asset-download",
 		map[string]any{"release": "abc123", "key": "config.json", "output": "cfg.json"},
-		"balena release-asset download abc123 --key config.json --output "+filepath.Join(root, "cfg.json"))
+		"balena release-asset download abc123 --key config.json --output "+filepath.Join(canonical, "cfg.json"))
 	expect(t, c, ctx, "release-asset-download",
 		map[string]any{"release": "abc123", "key": "config.json", "output": "sub/cfg.json", "overwrite": true},
 		"balena release-asset download abc123 --key config.json --output "+
-			filepath.Join(root, "sub/cfg.json")+" --overwrite")
+			filepath.Join(canonical, "sub/cfg.json")+" --overwrite")
 
 	// upload requires the file to exist inside the root.
-	payload := filepath.Join(root, "app.tar.gz")
-	require.NoError(t, os.WriteFile(payload, []byte("x"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "app.tar.gz"), []byte("x"), 0o600))
+	payload := filepath.Join(canonical, "app.tar.gz")
 	expect(t, c, ctx, "release-asset-upload",
 		map[string]any{"release": "abc123", "key": "app", "file_path": "app.tar.gz"},
 		"balena release-asset upload abc123 "+payload+" --key app")
