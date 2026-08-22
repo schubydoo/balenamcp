@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **33 of the 53 tools change state on real devices or in balenaCloud.** A
+> **34 of the 54 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -237,6 +237,7 @@ nothing balenamcp-specific about the wiring.
 > | `device-start-service` | Start a stopped service container | yes (`device-stop-service`) |
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** (one device per call) | **no — data is gone** |
+> | `device-os-update` | **Host OS update.** A takeover target re-partitions the disk, **erasing all data** | **no — takeover updates cannot be rolled back** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
 > | `device-public-url-set` | **Expose a device's service on a public, unauthenticated URL** (or disable it) | yes (disable again) |
@@ -311,6 +312,14 @@ sharply `device purge`, which wipes `/data` irreversibly. balenamcp rejects any
 value containing a comma on `device-purge`, `device-restart`,
 `device-start-service` and `device-stop-service` (on both the device **and**
 the service argument), and asks the agent to loop instead.
+
+`device-os-update` requires `version`. Omitting it makes the CLI render an
+interactive version picker, and `--include-draft` is not exposed at all —
+upstream marks it mutually exclusive with `--version`, and when a version is
+given the CLI already derives draft support from the version string. Candidate
+versions come from `os-versions` (keyed by device type) and the device's
+current version from `device-info`; the CLI has no non-interactive way to list
+a specific device's update targets.
 
 `device-note` requires its note text: the balena CLI documents that an omitted
 note is read from stdin, but the v25.2.5 implementation instead writes an empty

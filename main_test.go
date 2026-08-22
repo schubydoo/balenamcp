@@ -329,6 +329,13 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// device-os-update: --version is always sent (omitting it makes the CLI
+	// render an interactive picker) and --yes is always sent (it confirms
+	// twice, once more for takeover updates).
+	expect(t, c, ctx, "device-os-update",
+		map[string]any{"uuid": "7cf02a6", "version": "2.101.7"},
+		"balena device os-update 7cf02a6 --version 2.101.7 --yes")
+
 	// device-public-url read path: bare form prints the URL, --status reports
 	// whether it is enabled.
 	expect(t, c, ctx, "device-public-url",
@@ -450,6 +457,7 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"device-os-update", map[string]any{"uuid": "7cf02a6", "version": "2.101.7"}},
 		{"device-identify", map[string]any{"uuid": "7cf02a6"}},
 		{"device-rename", map[string]any{"uuid": "7cf02a6", "new_name": "MyPi"}},
 		{"device-note", map[string]any{"uuid": "7cf02a6", "note": "hi"}},
@@ -531,6 +539,13 @@ func TestErrors(t *testing.T) {
 		map[string]any{"name": "MyFleet"}, "organization")
 	expectError(t, c, ctx, "fleet-create",
 		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// device-os-update: version is required, or the CLI prompts.
+	expectError(t, c, ctx, "device-os-update",
+		map[string]any{"uuid": "7cf02a6"}, "version")
+	expectError(t, c, ctx, "device-os-update",
+		map[string]any{"uuid": "7cf02a6", "version": "-v"},
+		"cannot start with '-'")
+
 	// device-rename / device-note / device-public-url-set: every argument the
 	// CLI would otherwise prompt for, infer, or misparse is required here.
 	expectError(t, c, ctx, "device-rename",
