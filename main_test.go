@@ -503,7 +503,6 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"device-move", map[string]any{"uuid": "7cf02a6", "fleet": "myorg/newfleet"}},
 		{"device-register", map[string]any{"fleet": "myorg/myfleet"}},
 		{"device-os-update", map[string]any{"uuid": "7cf02a6", "version": "2.101.7"}},
-		{"device-identify", map[string]any{"uuid": "7cf02a6"}},
 		{"device-rename", map[string]any{"uuid": "7cf02a6", "new_name": "MyPi"}},
 		{"device-note", map[string]any{"uuid": "7cf02a6", "note": "hi"}},
 		{"device-public-url-set", map[string]any{"uuid": "7cf02a6", "enable": true}},
@@ -771,6 +770,14 @@ func TestConfirmGate(t *testing.T) {
 // both fields preset (ReadOnlyHint=false, DestructiveHint=true), so a tool
 // registered without going through our readOnly/destructive helpers would slip
 // through as "destructive" even if it shouldn't be. This test catches that.
+// transientTools is the allow-list for tools annotated neither read-only nor
+// destructive. Keeping it explicit means a tool cannot drift into the class by
+// forgetting an annotation — the invariant test fails until it is listed here
+// on purpose.
+var transientTools = map[string]struct{}{
+	"device-identify": {},
+}
+
 func TestAnnotationsInvariant(t *testing.T) {
 	c, ctx := newTestClient(t)
 	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
@@ -785,9 +792,17 @@ func TestAnnotationsInvariant(t *testing.T) {
 				tool.Name, ro, de)
 			continue
 		}
-		if *ro == *de {
-			t.Errorf("tool %q must have exactly one of readOnlyHint/destructiveHint true (got both=%v)",
-				tool.Name, *ro)
+		// A tool may be read-only, or destructive, or neither — the last is
+		// the `transient` class for operations that act on a device without
+		// leaving state (device-identify). Both true is always wrong.
+		if *ro && *de {
+			t.Errorf("tool %q is annotated both readOnlyHint and destructiveHint", tool.Name)
+		}
+		if !*ro && !*de {
+			if _, ok := transientTools[tool.Name]; !ok {
+				t.Errorf("tool %q is annotated neither readOnlyHint nor destructiveHint; "+
+					"add it to transientTools if that is deliberate", tool.Name)
+			}
 		}
 	}
 }
@@ -903,4 +918,36 @@ func TestReleaseAssetToolsDisabled(t *testing.T) {
 	expect(t, c, ctx, "release-asset-delete",
 		map[string]any{"release": "abc123", "key": "k"},
 		"balena release-asset delete abc123 --key k --yes")
+}
+
+// TestTransientToolAnnotation pins device-identify's classification: it acts
+// on a device, so it is not read-only, but nothing persists, so it is not
+// destructive either and must not be gated by BALENAMCP_REQUIRE_CONFIRM.
+func TestTransientToolAnnotation(t *testing.T) {
+	t.Setenv("BALENAMCP_REQUIRE_CONFIRM", "1")
+	c, ctx := newTestClient(t)
+
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	require.NoError(t, err)
+
+	var found bool
+	for _, tool := range res.Tools {
+		if tool.Name != "device-identify" {
+			continue
+		}
+		found = true
+		require.NotNil(t, tool.Annotations.ReadOnlyHint)
+		require.NotNil(t, tool.Annotations.DestructiveHint)
+		assert.False(t, *tool.Annotations.ReadOnlyHint, "acts on the device, so not read-only")
+		assert.False(t, *tool.Annotations.DestructiveHint, "leaves no state, so not destructive")
+		// no confirm field, since the gate does not apply
+		if props, ok := tool.InputSchema.Properties["confirm"]; ok {
+			t.Errorf("device-identify advertises a confirm field it never reads: %v", props)
+		}
+	}
+	assert.True(t, found, "device-identify is not advertised")
+
+	// and it runs with the gate on and no confirm argument
+	expect(t, c, ctx, "device-identify",
+		map[string]any{"uuid": "7cf02a6"}, "balena device identify 7cf02a6")
 }

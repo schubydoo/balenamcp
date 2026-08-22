@@ -224,7 +224,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **43 of the 64 tools change state on real devices or in balenaCloud.** A
+> **42 of the 64 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -246,7 +246,6 @@ nothing balenamcp-specific about the wiring.
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
 > | `device-local-mode-set` | Enable/disable local mode (LAN dev access; suspends cloud updates) | yes (toggle back) |
 > | `device-public-url-set` | **Expose a device's service on a public, unauthenticated URL** (or disable it) | yes (disable again) |
-> | `device-identify` | Blink the device's ACT LED to locate it | n/a — the LED stops on its own |
 > | `device-rename` | Rename a device | yes (rename again) |
 > | `device-note` | Set a device's note, **replacing** any existing note | no — the previous note is not kept |
 > | `device-pin` | Pin a device to a specific release | yes (`device-track-fleet` or re-pin) |
@@ -281,9 +280,25 @@ nothing balenamcp-specific about the wiring.
 > `confirm: true` in its arguments. Useful with MCP clients that don't
 > honor `destructiveHint`.
 
+### Neither read-only nor destructive
+
+One tool sits in between. **`device-identify`** blinks a device's ACT LED to
+help you find the board on a shelf. It acts on the device, so it is not
+read-only — but nothing persists once the LED stops, so it is not destructive
+either. It is annotated `readOnlyHint: false` / `destructiveHint: false`,
+carries no `confirm` argument, and is **not** gated by
+`BALENAMCP_REQUIRE_CONFIRM`. Making an operator acknowledge a blinking LED
+trains them to acknowledge without reading, which costs more safety than it
+buys.
+
+The bar for this class is narrow: nothing at all persists after the call
+returns. Tools that create or overwrite lasting state stay destructive even
+where they are additive in spirit (`fleet-create`, `tag-set`, `env-set`),
+because undoing them takes another call.
+
 ### Read-only
 
-The remaining 21 tools are read-only — they shell out to balena with no
+The other 21 tools are read-only — they shell out to balena with no
 state change. Safe to call without confirmation.
 
 | Tool | Purpose |

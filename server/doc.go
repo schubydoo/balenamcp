@@ -30,9 +30,11 @@
 //
 // # Tool surface
 //
-// Tools split into two categories: 17 read-only (registered under the
-// readOnlyHint annotation) and 12 destructive (destructiveHint annotation,
-// plus an injected confirm bool field). Registration is grouped by category
+// Tools split into three categories: 21 read-only (readOnlyHint annotation),
+// 42 destructive (destructiveHint annotation, plus an injected confirm bool
+// field), and 1 transient — device-identify, which acts on a device but
+// leaves no state, so it is annotated neither and carries no confirm gate.
+// Registration is grouped by category
 // across helper functions (registerReadOnlyIdentity,
 // registerMutatingDeviceLifecycle, …) — each helper handles a small cluster
 // of related tools to keep cyclomatic complexity manageable and to make
