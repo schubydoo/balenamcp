@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **27 of the 46 tools change state on real devices or in balenaCloud.** A
+> **29 of the 48 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -233,6 +233,8 @@ nothing balenamcp-specific about the wiring.
 > |---|---|---|
 > | `device-reboot` | Remote reboot | yes (device comes back up) |
 > | `device-restart` | Restart containers (no reboot) | yes |
+> | `device-stop-service` | **Stop a service container and leave it stopped** | yes (`device-start-service`) |
+> | `device-start-service` | Start a stopped service container | yes (`device-stop-service`) |
 > | `device-shutdown` | Remote shutdown — **manual power cycle to recover** | requires physical access |
 > | `device-purge` | **Wipe `/data` on the device** | **no — data is gone** |
 > | `device-ssh` | Run an arbitrary command on the device (host OS or a service container) | **depends on the command run** |
@@ -296,6 +298,13 @@ state change. Safe to call without confirmation.
 `tag-list` / `tag-set` / `tag-rm` require **exactly one** of
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
 of `fleet` / `device`.
+
+`device-start-service` and `device-stop-service` take **one device and one
+service per call**. The balena CLI accepts comma-separated lists for both and
+acts on every combination, which would let a single call stop a service across
+an entire estate behind one confirmation; balenamcp rejects any value
+containing a comma and asks the agent to loop instead. (`device-restart`
+predates this rule and still forwards lists — see its row above.)
 
 `fleet-create` requires `organization` **and** `type`, even though the balena
 CLI treats both as optional: the CLI falls back to an interactive dropdown when

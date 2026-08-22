@@ -329,6 +329,14 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// per-service container control
+	expect(t, c, ctx, "device-start-service",
+		map[string]any{"uuid": "7cf02a6", "service": "myService"},
+		"balena device start-service 7cf02a6 myService")
+	expect(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "7cf02a6", "service": "myService"},
+		"balena device stop-service 7cf02a6 myService")
+
 	// fleet create / rename. Both --organization and --type are always sent:
 	// the CLI shows an interactive dropdown when either is omitted and the
 	// account has more than one candidate, which would hang the call.
@@ -409,6 +417,8 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"device-start-service", map[string]any{"uuid": "7cf02a6", "service": "myService"}},
+		{"device-stop-service", map[string]any{"uuid": "7cf02a6", "service": "myService"}},
 		{"fleet-create", map[string]any{"name": "MyFleet", "organization": "myorg", "type": "raspberrypi4-64"}},
 		{"fleet-rename", map[string]any{"fleet": "myorg/oldname", "new_name": "NewName"}},
 		{"organization-create", map[string]any{"name": "acme"}},
@@ -484,6 +494,30 @@ func TestErrors(t *testing.T) {
 		map[string]any{"name": "MyFleet"}, "organization")
 	expectError(t, c, ctx, "fleet-create",
 		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// The multi-target guard rejects comma-separated lists on BOTH positional
+	// args of both per-service tools. Each is a separate branch.
+	expectError(t, c, ctx, "device-start-service",
+		map[string]any{"uuid": "7cf02a6,55d43b3", "service": "myService"},
+		"single target per call")
+	expectError(t, c, ctx, "device-start-service",
+		map[string]any{"uuid": "7cf02a6", "service": "svc1,svc2"},
+		"single target per call")
+	expectError(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "7cf02a6,55d43b3", "service": "myService"},
+		"single target per call")
+	expectError(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "7cf02a6", "service": "svc1,svc2"},
+		"single target per call")
+	// ...and both args stay required and flag-shape guarded.
+	expectError(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "7cf02a6"}, "service")
+	expectError(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "-h", "service": "myService"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "device-stop-service",
+		map[string]any{"uuid": "7cf02a6", "service": "-s"},
+		"cannot start with '-'")
+
 	// fleet-rename: new_name is required (the CLI would otherwise prompt) and
 	// flag-shape guarded.
 	expectError(t, c, ctx, "fleet-rename",
