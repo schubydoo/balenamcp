@@ -134,7 +134,7 @@ A `-dry-run` flag is available — the server prints the balena command it
 | Variable | Default | Purpose |
 |---|---|---|
 | `BALENAMCP_EXEC_TIMEOUT` | `60` (seconds) | Wall-clock cap on any single balena CLI subprocess. Prevents `device-logs --tail` and similar long-running commands from blocking the MCP transport indefinitely. Set to a higher integer for slow networks; the server logs a warning and falls back to default if the value is non-positive or non-numeric. |
-| `BALENAMCP_ASSET_DIR` | unset (filesystem tools disabled) | The single directory balenamcp may read from or write to on the host. Unset — the default — makes `release-asset-download` and `release-asset-upload` refuse to run at all; every other tool is a pure cloud call and is unaffected. When set, those tools take paths **relative to this directory**, and absolute paths, `..` traversal and symlinks pointing outside it are rejected. Set it to a dedicated directory, not `$HOME`. |
+| `BALENAMCP_ASSET_DIR` | unset (filesystem tools disabled) | The single directory balenamcp may read from or write to on the host. Unset — the default — makes `release-asset-download`, `release-asset-upload` and `ssh-key-add` refuse to run at all; every other tool is a pure cloud call and is unaffected. When set, those tools take paths **relative to this directory**, and absolute paths, `..` traversal and symlinks pointing outside it are rejected. Set it to a dedicated directory, not `$HOME`. |
 | `BALENAMCP_REQUIRE_CONFIRM` | unset (off) | When set to `1`/`true`, every destructive tool refuses to run unless the call carries `confirm: true` in its arguments. A belt-and-suspenders safety net for MCP clients that ignore the `destructiveHint` annotation. Off by default — Claude Desktop and other compliant clients already prompt before invoking destructive tools, so the gate is redundant there. |
 
 ## Authenticate
@@ -224,7 +224,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **41 of the 61 tools change state on real devices or in balenaCloud.** A
+> **43 of the 64 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -270,6 +270,8 @@ nothing balenamcp-specific about the wiring.
 > | `organization-rename` | Rename an organization | yes (rename again) |
 > | `organization-rm` | **Delete an organization** (passes `--yes`) | **no** |
 > | `api-key-revoke` | **Revoke API key(s)** by ID | **no** |
+> | `ssh-key-add` | Register an SSH **public** key on the account | yes (`ssh-key-rm`) |
+> | `ssh-key-rm` | **Remove an SSH key** (passes `--yes`). Removing the wrong one can lock a user out of their devices | **no — re-add the key from a local copy** |
 > | `release-asset-upload` | Upload a local file as a release asset | yes (`release-asset-delete`) |
 > | `release-asset-download` | **Writes a file to the server's host filesystem** | yes (delete the file) |
 > | `release-asset-delete` | **Delete a release asset** (passes `--yes`) | **no — the CLI documents this as impossible to undo** |
@@ -281,7 +283,7 @@ nothing balenamcp-specific about the wiring.
 
 ### Read-only
 
-The remaining 20 tools are read-only — they shell out to balena with no
+The remaining 21 tools are read-only — they shell out to balena with no
 state change. Safe to call without confirmation.
 
 | Tool | Purpose |
@@ -302,6 +304,7 @@ state change. Safe to call without confirmation.
 | `os-versions` | Available balenaOS versions for a device type |
 | `organization-list` | Organizations the user belongs to |
 | `ssh-key-list` | SSH keys registered in balenaCloud |
+| `ssh-key-info` | One SSH key by its numeric ID |
 | `api-key-list` | balenaCloud API keys |
 | `device-detect` | Scan the local network (LAN) for balenaOS devices |
 | `device-local-mode-get` | Report whether local mode is enabled on a device |
@@ -321,9 +324,10 @@ value containing a comma on `device-purge`, `device-restart`,
 `device-start-service` and `device-stop-service` (on both the device **and**
 the service argument), and asks the agent to loop instead.
 
-**Host filesystem access is opt-in.** `release-asset-download` and
-`release-asset-upload` are the only tools that read or write local files, and
-they refuse to run unless `BALENAMCP_ASSET_DIR` names a directory. All their
+**Host filesystem access is opt-in.** `release-asset-download`,
+`release-asset-upload` and `ssh-key-add` are the only tools that read or write
+local files, and they refuse to run unless `BALENAMCP_ASSET_DIR` names a
+directory. All their
 paths are relative to it. Argv-slice construction stops shell injection but
 says nothing about path traversal, so the boundary is enforced explicitly:
 absolute paths and Windows volume names are refused, the joined path must stay

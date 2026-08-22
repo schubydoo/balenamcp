@@ -331,6 +331,10 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// ssh-key-rm always passes --yes.
+	expect(t, c, ctx, "ssh-key-rm",
+		map[string]any{"id": float64(17)}, "balena ssh-key rm 17 --yes")
+
 	// device estate: rm / deactivate always pass --yes, move always sends
 	// --fleet, register builds its optional flags.
 	expect(t, c, ctx, "device-rm",
@@ -363,6 +367,10 @@ func TestMutatingTools(t *testing.T) {
 	expect(t, c, ctx, "device-os-update",
 		map[string]any{"uuid": "7cf02a6", "version": "2.101.7"},
 		"balena device os-update 7cf02a6 --version 2.101.7 --yes")
+
+	// ssh-key-info takes a numeric ID, like env-rm.
+	expect(t, c, ctx, "ssh-key-info",
+		map[string]any{"id": float64(17)}, "balena ssh-key 17")
 
 	// device-public-url read path: bare form prints the URL, --status reports
 	// whether it is enabled.
@@ -485,6 +493,8 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"ssh-key-add", map[string]any{"name": "Main", "path": "id_rsa.pub"}},
+		{"ssh-key-rm", map[string]any{"id": float64(17)}},
 		{"release-asset-download", map[string]any{"release": "abc123", "key": "cfg", "output": "a.bin"}},
 		{"release-asset-upload", map[string]any{"release": "abc123", "key": "cfg", "file_path": "a.bin"}},
 		{"release-asset-delete", map[string]any{"release": "abc123", "key": "cfg"}},
@@ -596,6 +606,10 @@ func TestErrors(t *testing.T) {
 	expectError(t, c, ctx, "device-register",
 		map[string]any{"fleet": "myorg/myfleet", "device_type": "-t"},
 		"cannot start with '-'")
+
+	// ssh-key ids are numeric, so a non-integer hits RequireInt's branch.
+	expectError(t, c, ctx, "ssh-key-info", map[string]any{}, "id")
+	expectError(t, c, ctx, "ssh-key-rm", map[string]any{}, "id")
 
 	// device-os-update: version is required, or the CLI prompts.
 	expectError(t, c, ctx, "device-os-update",
@@ -817,6 +831,12 @@ func TestReleaseAssetTools(t *testing.T) {
 		map[string]any{"release": "abc123", "key": "app", "file_path": "app.tar.gz", "overwrite": true},
 		"balena release-asset upload abc123 "+payload+" --key app --overwrite")
 
+	// ssh-key-add reads a host file, so it shares the release-asset boundary.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "id_rsa.pub"), []byte("ssh-rsa AAAA"), 0o600))
+	expect(t, c, ctx, "ssh-key-add",
+		map[string]any{"name": "Main", "path": "id_rsa.pub"},
+		"balena ssh-key add Main "+filepath.Join(canonical, "id_rsa.pub"))
+
 	// ----- refusals -----
 
 	// download will not silently clobber an existing file.
@@ -846,6 +866,16 @@ func TestReleaseAssetTools(t *testing.T) {
 		map[string]any{"release": "abc123", "key": "k", "file_path": "../../etc/passwd"},
 		"escapes BALENAMCP_ASSET_DIR")
 
+	expectError(t, c, ctx, "ssh-key-add",
+		map[string]any{"name": "Main", "path": "../../.ssh/id_rsa"},
+		"escapes BALENAMCP_ASSET_DIR")
+	expectError(t, c, ctx, "ssh-key-add",
+		map[string]any{"name": "Main", "path": "missing.pub"},
+		"not readable")
+	expectError(t, c, ctx, "ssh-key-add",
+		map[string]any{"name": "Main", "path": "adir"},
+		"is a directory")
+
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o600))
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err == nil {
@@ -866,6 +896,9 @@ func TestReleaseAssetToolsDisabled(t *testing.T) {
 		"filesystem access is disabled")
 	expectError(t, c, ctx, "release-asset-upload",
 		map[string]any{"release": "abc123", "key": "k", "file_path": "cfg.json"},
+		"filesystem access is disabled")
+	expectError(t, c, ctx, "ssh-key-add",
+		map[string]any{"name": "Main", "path": "id_rsa.pub"},
 		"filesystem access is disabled")
 	expect(t, c, ctx, "release-asset-delete",
 		map[string]any{"release": "abc123", "key": "k"},
