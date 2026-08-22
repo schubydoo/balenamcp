@@ -256,25 +256,53 @@ func requireIdentifier(r mcp.CallToolRequest, key, what string) (string, *mcp.Ca
 	return v, nil
 }
 
-// requireSingleTarget is requireIdentifier plus a multi-target guard, for
-// arguments whose balena CLI counterpart accepts a comma-separated list.
+// rejectMultiTarget blocks comma-separated values on arguments whose balena
+// CLI counterpart would split on "," and act on every element.
 //
-// Several CLI commands (`device rm`, `deactivate`, `move`, `start-service`,
-// `stop-service`) split their positional args on "," and act on every element,
-// so one tool call could reach an unbounded number of devices behind a single
-// guardDestructive check. balenamcp constrains those arguments to one target
-// per call: the blast radius stays bounded, and each action is individually
-// visible to whoever is auditing the agent. An agent that genuinely needs N
-// targets loops, which is cheap.
+// Several CLI commands (`device purge`, `restart`, `rm`, `deactivate`, `move`,
+// `start-service`, `stop-service`) accept lists, so one tool call could reach
+// an unbounded number of devices behind a single guardDestructive check —
+// `device purge` would wipe /data on all of them, permanently. balenamcp
+// constrains those arguments to one device per call: the blast radius stays
+// bounded, and each action is individually visible to whoever is auditing the
+// agent. An agent that genuinely needs N targets loops, which is cheap.
+//
+// The one deliberate exception is api-key-revoke, whose CLI command is
+// inherently list-shaped and whose targets are credentials rather than
+// devices, so per-call batching buys no safety. See README.
+func rejectMultiTarget(v, what string) *mcp.CallToolResult {
+	if strings.Contains(v, ",") {
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"%q lists more than one %s: this tool accepts a single target per call, "+
+				"so call it once per %s", v, what, what))
+	}
+	return nil
+}
+
+// requireSingleTarget is requireIdentifier plus the multi-target guard.
 func requireSingleTarget(r mcp.CallToolRequest, key, what string) (string, *mcp.CallToolResult) {
 	v, errRes := requireIdentifier(r, key, what)
 	if errRes != nil {
 		return "", errRes
 	}
-	if strings.Contains(v, ",") {
-		return "", mcp.NewToolResultError(fmt.Sprintf(
-			"%q lists more than one %s: this tool accepts a single target per call, "+
-				"so call it once per %s", v, what, what))
+	if e := rejectMultiTarget(v, what); e != nil {
+		return "", e
+	}
+	return v, nil
+}
+
+// getSingleTarget is the optional-arg companion to requireSingleTarget:
+// getIdentifier plus the multi-target guard. Returns ("", nil) when absent.
+func getSingleTarget(r mcp.CallToolRequest, key, what string) (string, *mcp.CallToolResult) {
+	v, errRes := getIdentifier(r, key, what)
+	if errRes != nil {
+		return "", errRes
+	}
+	if v == "" {
+		return "", nil
+	}
+	if e := rejectMultiTarget(v, what); e != nil {
+		return "", e
 	}
 	return v, nil
 }
@@ -801,17 +829,20 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 
 	// device-restart -------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-restart",
-		mcp.WithDescription("Restart application containers on a device (does NOT reboot the device itself). Optionally restart only a specific service."),
+		mcp.WithDescription("Restart application containers on a device (does NOT reboot the device itself). Optionally restart only a specific service. One device and one service per call — comma-separated lists are rejected."),
 		destructive,
 		mcp.WithString("uuid", mcp.Required(),
-			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
-		mcp.WithString("service", mcp.Description("Service name(s) to restart, comma-separated. Omit to restart all services.")),
+			mcp.Description("Device UUID. One device per call; comma-separated lists are rejected.")),
+		mcp.WithString("service", mcp.Description("Service name to restart. One service per call; comma-separated lists are rejected. Omit to restart all services.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}
-		service, errRes := getIdentifier(r, "service", "service name")
+		service, errRes := getSingleTarget(r, "service", "service name")
 		if errRes != nil {
 			return errRes, nil
 		}
@@ -840,12 +871,15 @@ func registerMutatingDeviceLifecycle(srv *server.MCPServer) {
 
 	// device-purge ---------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-purge",
-		mcp.WithDescription("Clear a device's /data directory. Persistent app data will be lost."),
+		mcp.WithDescription("Clear a device's /data directory. Persistent app data will be lost and cannot be recovered. One device per call — comma-separated lists are rejected."),
 		destructive,
 		mcp.WithString("uuid", mcp.Required(),
-			mcp.Description("Device UUID. Multiple devices can be given as a comma-separated list (no spaces).")),
+			mcp.Description("Device UUID. One device per call; comma-separated lists are rejected.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		uuid, errRes := guardDestructive(r, "uuid", "device UUID")
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		uuid, errRes := requireSingleTarget(r, "uuid", "device UUID")
 		if errRes != nil {
 			return errRes, nil
 		}

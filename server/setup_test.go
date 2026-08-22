@@ -258,6 +258,40 @@ func TestRequireSingleTarget(t *testing.T) {
 	}
 }
 
+func TestGetSingleTarget(t *testing.T) {
+	// absent — no error, empty value (the optional-arg contract).
+	v, errRes := getSingleTarget(req(map[string]any{}), "service", "service name")
+	if errRes != nil || v != "" {
+		t.Errorf("absent arg: got v=%q err=%v, want empty and no error", v, errRes)
+	}
+	// present and single
+	v, errRes = getSingleTarget(req(map[string]any{"service": "api"}), "service", "service name")
+	if errRes != nil || v != "api" {
+		t.Errorf("single value: got v=%q err=%v", v, errRes)
+	}
+	// present and a list
+	v, errRes = getSingleTarget(req(map[string]any{"service": "api,web"}), "service", "service name")
+	if errRes == nil {
+		t.Fatalf("comma-separated value should be rejected, got %q", v)
+	}
+	if v != "" {
+		t.Errorf("error path must return an empty value, got %q", v)
+	}
+	txt, ok := mcp.AsTextContent(errRes.Content[0])
+	if !ok {
+		t.Fatalf("error content is not text: %T", errRes.Content[0])
+	}
+	if !strings.Contains(txt.Text, "single target per call") {
+		t.Errorf("unexpected error text: %q", txt.Text)
+	}
+	// flag-shaped values are still rejected by the inner guard, and that
+	// check runs before the list check.
+	_, errRes = getSingleTarget(req(map[string]any{"service": "-s,x"}), "service", "service name")
+	if errRes == nil {
+		t.Errorf("flag-shaped value should be rejected")
+	}
+}
+
 func TestGetIdentifier(t *testing.T) {
 	// absent
 	v, errRes := getIdentifier(req(map[string]any{}), "fleet", "fleet slug")

@@ -375,7 +375,11 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"id": float64(42), "value": "newval", "device": true, "config": true},
 		"balena env rename 42 newval --device --config")
 
-	// api-key-revoke — single comma-separated positional, never split.
+	// api-key-revoke — single comma-separated positional, never split. This is
+	// the one deliberate exception to the one-device-per-call rule enforced by
+	// rejectMultiTarget: the CLI command is inherently list-shaped and its
+	// targets are credentials, not devices, so batching buys no safety. If the
+	// guard is ever applied blanket-wise, this assertion fails first.
 	expect(t, c, ctx, "api-key-revoke",
 		map[string]any{"ids": "123,456"}, "balena api-key revoke 123,456")
 }
@@ -494,6 +498,21 @@ func TestErrors(t *testing.T) {
 		map[string]any{"name": "MyFleet"}, "organization")
 	expectError(t, c, ctx, "fleet-create",
 		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// The multi-target guard also covers the two tools that predated it.
+	// device-purge is the sharp one: without this, a single confirmation could
+	// wipe /data on every device in the list.
+	expectError(t, c, ctx, "device-purge",
+		map[string]any{"uuid": "7cf02a6,55d43b3"},
+		"single target per call")
+	expectError(t, c, ctx, "device-restart",
+		map[string]any{"uuid": "7cf02a6,55d43b3"},
+		"single target per call")
+	// device-restart's service arg is optional, so it goes through the
+	// getSingleTarget branch rather than requireSingleTarget.
+	expectError(t, c, ctx, "device-restart",
+		map[string]any{"uuid": "7cf02a6", "service": "svc1,svc2"},
+		"single target per call")
+
 	// The multi-target guard rejects comma-separated lists on BOTH positional
 	// args of both per-service tools. Each is a separate branch.
 	expectError(t, c, ctx, "device-start-service",
