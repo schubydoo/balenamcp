@@ -223,7 +223,7 @@ nothing balenamcp-specific about the wiring.
 
 > ### ⚠️ Destructive tools — read this first
 >
-> **25 of the 44 tools change state on real devices or in balenaCloud.** A
+> **27 of the 46 tools change state on real devices or in balenaCloud.** A
 > reboot or `device-purge` can't be undone from inside the model. Every
 > destructive tool is flagged with `destructiveHint: true` in its MCP
 > annotation, and Claude Desktop (and other compliant MCP clients) prompts
@@ -244,6 +244,8 @@ nothing balenamcp-specific about the wiring.
 > | `fleet-restart` | Restart containers on **every device** in a fleet | yes |
 > | `fleet-purge` | **Wipe `/data` on every device** in a fleet | **no — data is gone** |
 > | `fleet-rm` | **Delete a fleet** (passes `--yes`) | **no** |
+> | `fleet-create` | Create a new fleet | yes (`fleet-rm`) |
+> | `fleet-rename` | Rename a fleet | yes (rename again) |
 > | `release-finalize` | Promote a draft release to final | **no — finals can't be un-finalized** |
 > | `release-invalidate` | Mark a release invalid so it won't auto-deploy | yes (`release-validate`) |
 > | `release-validate` | Re-validate a previously invalidated release | yes (`release-invalidate`) |
@@ -295,9 +297,16 @@ state change. Safe to call without confirmation.
 `fleet` / `device` / `release`. `env-list` / `env-set` require **exactly one**
 of `fleet` / `device`.
 
+`fleet-create` requires `organization` **and** `type`, even though the balena
+CLI treats both as optional: the CLI falls back to an interactive dropdown when
+either is missing and the account has more than one candidate, and an
+interactive prompt over MCP is a hang, not a question. The same reasoning makes
+`new_name` mandatory on `fleet-rename`. Use `organization-list` and
+`device-type-list` to discover valid values.
+
 ### What balenamcp deliberately does not wrap
 
-balenamcp wraps 44 of the balena CLI's ~90 commands. The gap is not an oversight
+balenamcp wraps a subset of the balena CLI's ~90 commands. The gap is not an oversight
 backlog — the commands below are **out of scope by decision**, for the reasons
 given. This section exists so the question is settled once instead of being
 re-litigated at every CLI bump; the `balena-cli-parity` review should treat a

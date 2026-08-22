@@ -329,6 +329,16 @@ func TestMutatingTools(t *testing.T) {
 		map[string]any{"fleet": "myorg/myfleet"},
 		"balena fleet rm myorg/myfleet --yes")
 
+	// fleet create / rename. Both --organization and --type are always sent:
+	// the CLI shows an interactive dropdown when either is omitted and the
+	// account has more than one candidate, which would hang the call.
+	expect(t, c, ctx, "fleet-create",
+		map[string]any{"name": "MyFleet", "organization": "myorg", "type": "raspberrypi4-64"},
+		"balena fleet create MyFleet --organization myorg --type raspberrypi4-64")
+	expect(t, c, ctx, "fleet-rename",
+		map[string]any{"fleet": "myorg/oldname", "new_name": "NewName"},
+		"balena fleet rename myorg/oldname NewName")
+
 	// organization create / rename / rm
 	expect(t, c, ctx, "organization-create",
 		map[string]any{"name": "acme"}, "balena organization create acme")
@@ -399,6 +409,8 @@ func TestConfirmGate_AllDestructiveTools(t *testing.T) {
 		{"fleet-purge", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-restart", map[string]any{"fleet": "myorg/myfleet"}},
 		{"fleet-rm", map[string]any{"fleet": "myorg/myfleet"}},
+		{"fleet-create", map[string]any{"name": "MyFleet", "organization": "myorg", "type": "raspberrypi4-64"}},
+		{"fleet-rename", map[string]any{"fleet": "myorg/oldname", "new_name": "NewName"}},
 		{"organization-create", map[string]any{"name": "acme"}},
 		{"organization-rename", map[string]any{"handle": "acme", "new_name": "acme2"}},
 		{"organization-rm", map[string]any{"handle": "acme"}},
@@ -454,6 +466,30 @@ func TestErrors(t *testing.T) {
 		"cannot start with '-'")
 	expectError(t, c, ctx, "organization-rename",
 		map[string]any{"handle": "acme", "new_name": "-foo"},
+		"cannot start with '-'")
+	// fleet-create guards all three identifiers independently; each is its own
+	// branch and each survives mutation if only the first is exercised.
+	expectError(t, c, ctx, "fleet-create",
+		map[string]any{"name": "-f", "organization": "myorg", "type": "raspberrypi4-64"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "fleet-create",
+		map[string]any{"name": "MyFleet", "organization": "-o", "type": "raspberrypi4-64"},
+		"cannot start with '-'")
+	expectError(t, c, ctx, "fleet-create",
+		map[string]any{"name": "MyFleet", "organization": "myorg", "type": "-t"},
+		"cannot start with '-'")
+	// ...and organization/type are required, so the CLI never reaches an
+	// interactive dropdown.
+	expectError(t, c, ctx, "fleet-create",
+		map[string]any{"name": "MyFleet"}, "organization")
+	expectError(t, c, ctx, "fleet-create",
+		map[string]any{"name": "MyFleet", "organization": "myorg"}, "type")
+	// fleet-rename: new_name is required (the CLI would otherwise prompt) and
+	// flag-shape guarded.
+	expectError(t, c, ctx, "fleet-rename",
+		map[string]any{"fleet": "myorg/oldname"}, "new_name")
+	expectError(t, c, ctx, "fleet-rename",
+		map[string]any{"fleet": "myorg/oldname", "new_name": "-foo"},
 		"cannot start with '-'")
 	expectError(t, c, ctx, "device-local-mode-get",
 		map[string]any{"uuid": "--help"}, "cannot start with '-'")
