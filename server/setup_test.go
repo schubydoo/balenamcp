@@ -287,8 +287,23 @@ func TestEvalExistingPrefix(t *testing.T) {
 			t.Fatalf("got %q, %v; want %q", got, err, filepath.Join(real, "sub", "new.bin"))
 		}
 	})
-	t.Run("file as directory component aborts", func(t *testing.T) {
-		_, err := evalExistingPrefix(filepath.Join(dir, "plain", "child"))
+	t.Run("file as directory component", func(t *testing.T) {
+		// Platform divergence, both fail closed but at different layers:
+		// POSIX returns ENOTDIR (not IsNotExist), so the resolver aborts
+		// here; Windows returns PATH_NOT_FOUND, which IS IsNotExist, so the
+		// walk-up succeeds and the caller's os.Stat backstop rejects the
+		// path instead. Pin each platform's actual behavior so a change on
+		// either side is visible.
+		got, err := evalExistingPrefix(filepath.Join(dir, "plain", "child"))
+		if runtime.GOOS == "windows" {
+			if err != nil {
+				t.Fatalf("windows: expected the walk-up to succeed, got %v", err)
+			}
+			if got != filepath.Join(real, "plain", "child") {
+				t.Errorf("windows: got %q, want rejoined path under the file", got)
+			}
+			return
+		}
 		if err == nil {
 			t.Fatalf("expected a non-NotExist resolution error")
 		}

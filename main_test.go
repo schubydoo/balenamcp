@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -952,13 +953,19 @@ func TestReleaseAssetTools(t *testing.T) {
 		map[string]any{"name": "Main", "path": "adir"},
 		"is a directory")
 
-	// A regular file used as a directory component makes EvalSymlinks fail
-	// with a non-NotExist error ("not a directory") — the branch that
-	// distinguishes "doesn't exist yet, keep walking" from "actively broken".
-	// app.tar.gz exists as a file above, so app.tar.gz/child is that input.
+	// A regular file used as a directory component. On POSIX EvalSymlinks
+	// fails with ENOTDIR (non-NotExist), so the resolver's "cannot be
+	// resolved" branch fires; on Windows the same input is PATH_NOT_FOUND
+	// (IsNotExist), the walk-up succeeds, and the upload handler's os.Stat
+	// backstop rejects it as unreadable instead. Fail-closed either way —
+	// assert the layer each platform actually uses.
+	fileAsDirErr := "cannot be resolved"
+	if runtime.GOOS == "windows" {
+		fileAsDirErr = "not readable"
+	}
 	expectError(t, c, ctx, "release-asset-upload",
 		map[string]any{"release": "abc123", "key": "k", "file_path": "app.tar.gz/child"},
-		"cannot be resolved")
+		fileAsDirErr)
 	// A symlink loop inside the root is the other deterministic trigger.
 	if err := os.Symlink(filepath.Join(root, "loop-b"), filepath.Join(root, "loop-a")); err == nil {
 		require.NoError(t, os.Symlink(filepath.Join(root, "loop-a"), filepath.Join(root, "loop-b")))
