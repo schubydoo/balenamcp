@@ -280,25 +280,9 @@ nothing balenamcp-specific about the wiring.
 > `confirm: true` in its arguments. Useful with MCP clients that don't
 > honor `destructiveHint`.
 
-### Neither read-only nor destructive
-
-One tool sits in between. **`device-identify`** blinks a device's ACT LED to
-help you find the board on a shelf. It acts on the device, so it is not
-read-only — but nothing persists once the LED stops, so it is not destructive
-either. It is annotated `readOnlyHint: false` / `destructiveHint: false`,
-carries no `confirm` argument, and is **not** gated by
-`BALENAMCP_REQUIRE_CONFIRM`. Making an operator acknowledge a blinking LED
-trains them to acknowledge without reading, which costs more safety than it
-buys.
-
-The bar for this class is narrow: nothing at all persists after the call
-returns. Tools that create or overwrite lasting state stay destructive even
-where they are additive in spirit (`fleet-create`, `tag-set`, `env-set`),
-because undoing them takes another call.
-
 ### Read-only
 
-The other 21 tools are read-only — they shell out to balena with no
+The remaining 22 tools are read-only — they shell out to balena with no
 state change. Safe to call without confirmation.
 
 | Tool | Purpose |
@@ -323,6 +307,7 @@ state change. Safe to call without confirmation.
 | `api-key-list` | balenaCloud API keys |
 | `device-detect` | Scan the local network (LAN) for balenaOS devices |
 | `device-local-mode-get` | Report whether local mode is enabled on a device |
+| `device-identify` | Blink a device's ACT LED so you can find the board on a shelf. Contacts the device but changes nothing — the LED stops on its own — so it needs no confirmation. |
 | `device-public-url` | Print a device's public URL, or with `status: true` report whether it is enabled. Turn it on or off with `device-public-url-set`. |
 
 ### Argument constraints
