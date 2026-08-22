@@ -3,6 +3,7 @@
 [![CI](https://github.com/schubydoo/balenamcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/schubydoo/balenamcp/actions/workflows/ci.yml)
 [![Security](https://github.com/schubydoo/balenamcp/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/schubydoo/balenamcp/actions/workflows/security.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/schubydoo/balenamcp/badge)](https://scorecard.dev/viewer/?uri=github.com/schubydoo/balenamcp)
+[![codecov](https://codecov.io/gh/schubydoo/balenamcp/branch/main/graph/badge.svg)](https://codecov.io/gh/schubydoo/balenamcp)
 [![Go Report Card](https://goreportcard.com/badge/github.com/schubydoo/balenamcp)](https://goreportcard.com/report/github.com/schubydoo/balenamcp)
 [![Go Reference](https://pkg.go.dev/badge/github.com/schubydoo/balenamcp.svg)](https://pkg.go.dev/github.com/schubydoo/balenamcp)
 [![Latest Release](https://img.shields.io/github/v/release/schubydoo/balenamcp?logo=github)](https://github.com/schubydoo/balenamcp/releases/latest)
@@ -492,6 +493,29 @@ construct. The dry-run tests assert what we *send*, not what the current CLI
   clean; the merge is the record that it was reviewed.
 - For the actual review, the **`balena-cli-parity`** check compares the flags
   and subcommands we pass against the current CLI surface.
+
+### Coverage and test reporting
+
+The hard gate is the `coverage (>= 80%)` job in `.github/workflows/ci.yml`,
+which enforces `COVERAGE_MIN` on a single Ubuntu cell and is a required check.
+It runs with `-coverpkg=./...` deliberately: the tests live in `package main`
+while most of the code lives in `package server`, so a per-package profile
+reads ~51% against a real ~96%.
+
+[Codecov](https://codecov.io/gh/schubydoo/balenamcp) sits alongside it for
+visibility only — PR comments, trend graphs and a per-surface breakdown of
+tools / prompts / resources, configured in `codecov.yml`. It is never a
+required check, and its uploads are non-blocking.
+
+Test results are uploaded separately. The `test` job runs through
+[`gotestsum`](https://github.com/gotestyourself/gotestsum) to emit a JUnit
+`junit.xml` per OS leg, tagged with a Codecov flag so Test Analytics can break
+flaky and slow tests out per platform. That is the axis this repo varies on —
+the `BALENAMCP_ASSET_DIR` path confinement resolves differently on macOS
+(`/var` → `/private/var`) and Windows (8.3 short-name expansion), and both were
+caught that way. Both uploads run under `!cancelled()`, so a **failing** run
+still reports: `gotestsum` writes `junit.xml` before exiting non-zero, and a
+red suite is exactly when the analytics matter.
 
 ### Release flow
 
