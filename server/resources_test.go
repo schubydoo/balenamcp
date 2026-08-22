@@ -195,6 +195,36 @@ func TestCompositeBenignError(t *testing.T) {
 	}
 }
 
+// TestCompositeBenignMismatch pins the third arm: a benign marker is set but
+// the error is something ELSE. Deleting the strings.Contains conjunct would
+// silently swallow every real failure on a benign-capable section as an
+// empty state; this case is what kills that mutant.
+func TestCompositeBenignMismatch(t *testing.T) {
+	run := fakeRunner(nil, map[string]string{
+		"tag list --device d": "boom: device offline",
+	})
+	out := composite(context.Background(), run, nil, []sectionSpec{
+		{key: "tags", args: []string{"tag", "list", "--device", "d"}, benign: "No tags found"},
+	})
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	if doc["partial"] != true {
+		t.Errorf("a non-benign failure must mark the doc partial, got %v", doc["partial"])
+	}
+	errs, ok := doc["errors"].(map[string]any)
+	if !ok {
+		t.Fatalf("want errors object, got %T", doc["errors"])
+	}
+	if s, _ := errs["tags"].(string); !strings.Contains(s, "device offline") {
+		t.Errorf("real failure must land under errors, got %v", errs["tags"])
+	}
+	if doc["tags"] == "No tags found" {
+		t.Errorf("real failure must NOT be remapped to the benign empty state")
+	}
+}
+
 // ----- composer functions (parse + compose) ------------------------------
 
 func TestResourceComposers(t *testing.T) {
@@ -277,6 +307,14 @@ func TestResourceComposers(t *testing.T) {
 				if !strings.Contains(text, want) {
 					t.Errorf("resource text missing %q\n---\n%s", want, text)
 				}
+			}
+			// Every stub above succeeds, so a "partial" or "errors" key means
+			// a section's argv drifted off the stub map and failed silently.
+			// Without this negative, the substring checks still pass — the
+			// section KEY appears under errors — and a broken section argv
+			// is invisible.
+			if strings.Contains(text, `"partial"`) || strings.Contains(text, `"errors"`) {
+				t.Errorf("all-success composition must have no partial/errors keys\n---\n%s", text)
 			}
 		})
 	}
