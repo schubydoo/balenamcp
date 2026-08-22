@@ -539,27 +539,6 @@ func destructive(t *mcp.Tool) {
 			"ignored otherwise."))(t)
 }
 
-// transient is the annotation set for a tool that acts on a device but leaves
-// no state behind: not read-only, and not destructive either. Per the MCP
-// spec, destructiveHint is meaningful only when readOnlyHint is false, and
-// false there means "performs only additive updates" — which is the honest
-// reading for an operation with nothing to add or destroy.
-//
-// The bar is deliberately narrow: nothing persists after the call returns.
-// device-identify blinks an LED for a few seconds and that is the whole
-// effect. Tools that create or overwrite lasting state (fleet-create,
-// tag-set, env-set) stay destructive even where they are additive in spirit,
-// because an agent can undo them only by issuing another call.
-//
-// Tools annotated this way carry no `confirm` field and are not gated by
-// BALENAMCP_REQUIRE_CONFIRM: making an operator acknowledge a blinking LED
-// trains them to acknowledge without reading, which costs more safety than it
-// buys.
-func transient(t *mcp.Tool) {
-	mcp.WithReadOnlyHintAnnotation(false)(t)
-	mcp.WithDestructiveHintAnnotation(false)(t)
-}
-
 // guardDestructive runs the standard destructive-tool preamble in one call:
 // the BALENAMCP_REQUIRE_CONFIRM gate, then a flag-shape-guarded lookup of
 // the named identifier argument. On success returns (id, nil); on either
@@ -1716,14 +1695,14 @@ func registerMutatingDeviceEstate(srv *server.MCPServer) {
 // device. The read side of public-url lives with the other read-only device
 // tools as device-public-url.
 //
-// device-identify is the server's one `transient` tool — it acts on the device
-// but leaves nothing behind, so it is annotated neither read-only nor
-// destructive and carries no confirm gate. See transient() for the bar.
+// device-identify is registered here for topical grouping but is annotated
+// read-only: blinking an LED leaves no state behind, so gating it behind a
+// confirmation would train operators to acknowledge without reading.
 func registerMutatingDeviceIdentity(srv *server.MCPServer) {
 	// device-identify ------------------------------------------------------
 	srv.AddTool(mcp.NewTool("device-identify",
-		mcp.WithDescription("Make a device physically identify itself by blinking its ACT LED (Raspberry Pi). Useful for locating one board among many on site. Nothing persists — the LED stops on its own — so this is neither a read nor a destructive change, and it is not gated by BALENAMCP_REQUIRE_CONFIRM. The device must be online or the CLI reports it as unreachable."),
-		transient,
+		mcp.WithDescription("Make a device physically identify itself by blinking its ACT LED (Raspberry Pi). Useful for locating one board among many on site. Annotated read-only: the LED stops on its own and no device or cloud state changes, so it needs no confirmation. The device must be online or the CLI reports it as unreachable."),
+		readOnly,
 		mcp.WithString("uuid", mcp.Required(),
 			mcp.Description("Device UUID.")),
 	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
