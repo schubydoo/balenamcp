@@ -260,6 +260,70 @@ func TestRequireSingleTarget(t *testing.T) {
 	}
 }
 
+// TestEvalExistingPrefix pins the walk-up resolver directly. The distinction
+// that matters is NotExist (keep walking to an existing ancestor) versus any
+// other error (abort): a gremlins mutant inverting !os.IsNotExist turns the
+// loop into a wrong walk on exactly the input an attacker controls, and only
+// a non-NotExist case kills it.
+func TestEvalExistingPrefix(t *testing.T) {
+	dir := t.TempDir()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plain"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("existing dir resolves", func(t *testing.T) {
+		got, err := evalExistingPrefix(dir)
+		if err != nil || got != real {
+			t.Fatalf("got %q, %v; want %q", got, err, real)
+		}
+	})
+	t.Run("nonexistent tail rejoined onto existing ancestor", func(t *testing.T) {
+		got, err := evalExistingPrefix(filepath.Join(dir, "sub", "new.bin"))
+		if err != nil || got != filepath.Join(real, "sub", "new.bin") {
+			t.Fatalf("got %q, %v; want %q", got, err, filepath.Join(real, "sub", "new.bin"))
+		}
+	})
+	t.Run("file as directory component", func(t *testing.T) {
+		// Platform divergence, both fail closed but at different layers:
+		// POSIX returns ENOTDIR (not IsNotExist), so the resolver aborts
+		// here; Windows returns PATH_NOT_FOUND, which IS IsNotExist, so the
+		// walk-up succeeds and the caller's os.Stat backstop rejects the
+		// path instead. Pin each platform's actual behavior so a change on
+		// either side is visible.
+		got, err := evalExistingPrefix(filepath.Join(dir, "plain", "child"))
+		if runtime.GOOS == "windows" {
+			if err != nil {
+				t.Fatalf("windows: expected the walk-up to succeed, got %v", err)
+			}
+			if got != filepath.Join(real, "plain", "child") {
+				t.Errorf("windows: got %q, want rejoined path under the file", got)
+			}
+			return
+		}
+		if err == nil {
+			t.Fatalf("expected a non-NotExist resolution error")
+		}
+		if os.IsNotExist(err) {
+			t.Fatalf("error must not be NotExist — that would keep the walk going: %v", err)
+		}
+	})
+	t.Run("symlink loop aborts", func(t *testing.T) {
+		if err := os.Symlink(filepath.Join(dir, "lb"), filepath.Join(dir, "la")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(dir, "la"), filepath.Join(dir, "lb")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := evalExistingPrefix(filepath.Join(dir, "la", "x")); err == nil {
+			t.Fatalf("expected a resolution error from the symlink loop")
+		}
+	})
+}
+
 func TestLoadAssetDirFromEnv(t *testing.T) {
 	t.Run("unset disables filesystem tools", func(t *testing.T) {
 		t.Setenv("BALENAMCP_ASSET_DIR", "")
@@ -306,6 +370,9 @@ func TestWithinRoot(t *testing.T) {
 		{filepath.Join("/srv", "assets-evil"), false},
 		{filepath.Join("/srv"), false},
 		{filepath.Join("/etc", "passwd"), false},
+		// filepath.Rel errors on a relative path vs an absolute root; the
+		// predicate must fail CLOSED (false), not fall through to inside.
+		{"relative/path", false},
 	}
 	for _, tc := range cases {
 		if got := withinRoot(root, tc.p); got != tc.want {
@@ -352,6 +419,56 @@ func TestResolveAssetPath(t *testing.T) {
 			}
 			if !strings.Contains(txt.Text, tc.wantErrLike) {
 				t.Errorf("error %q does not contain %q", txt.Text, tc.wantErrLike)
+			}
+		})
+	}
+
+	t.Run("in-root symlink returns the caller's path, not the resolved one", func(t *testing.T) {
+		// The containment check runs on the RESOLVED path, but the returned
+		// argv deliberately carries the caller-shaped join — the CLI should
+		// see the path the agent asked for. Every prior case had full == real,
+		// so a mutant returning `real` instead survived.
+		if err := os.Mkdir(filepath.Join(root, "realdir"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(root, "realdir"), filepath.Join(root, "alias")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		got, errRes := resolveAssetPath(filepath.Join("alias", "f.bin"), "output path")
+		if errRes != nil {
+			t.Fatalf("in-root symlink must be allowed: %v", errRes)
+		}
+		if got != filepath.Join(canonical, "alias", "f.bin") {
+			t.Errorf("got %q, want the unresolved alias path %q",
+				got, filepath.Join(canonical, "alias", "f.bin"))
+		}
+	})
+
+	t.Run("root deleted after startup fails closed", func(t *testing.T) {
+		// loadAssetDirFromEnv validated the root once; if it disappears
+		// afterwards every call must become a refusal, not a fallthrough.
+		Config.AssetDir = filepath.Join(t.TempDir(), "gone")
+		defer func() { Config.AssetDir = root }()
+		_, errRes := resolveAssetPath("ok.bin", "output path")
+		if errRes == nil {
+			t.Fatalf("expected refusal when the asset root no longer resolves")
+		}
+		txt, ok := mcp.AsTextContent(errRes.Content[0])
+		if !ok || !strings.Contains(txt.Text, "BALENAMCP_ASSET_DIR") ||
+			!strings.Contains(txt.Text, "cannot be resolved") {
+			t.Errorf("refusal should name the root and the cause, got %#v", errRes.Content[0])
+		}
+	})
+
+	if runtime.GOOS == "windows" {
+		t.Run("volume-relative path is refused on windows", func(t *testing.T) {
+			// C:foo has a volume name but is not absolute; without the
+			// VolumeName check it would sail through the IsAbs rejection.
+			// The doc comment promises this refusal — this is the only place
+			// it is verified, and only the Windows CI leg can do it.
+			_, errRes := resolveAssetPath(`C:evil.bin`, "output path")
+			if errRes == nil {
+				t.Fatalf("expected volume-relative path to be refused")
 			}
 		})
 	}
@@ -465,25 +582,101 @@ func TestExecuteCommandTimeout(t *testing.T) {
 		t.Skipf("sleep not on PATH: %v", err)
 	}
 
-	// Reach into the package's runCmd plumbing by impersonating its work — we
-	// invoke exec.CommandContext directly with the same context shape that
-	// executeCommand builds, so the test stays meaningful even though we
-	// can't call `balena` itself.
-	parent := context.Background()
-	ctx, cancel := context.WithTimeout(parent, 50*time.Millisecond)
-	defer cancel()
+	// Call the REAL function under test. An earlier version of this test
+	// re-implemented exec.CommandContext + WithTimeout inline and asserted on
+	// its own re-implementation, leaving the production deadline branch, its
+	// message, and the DeadlineExceeded discrimination entirely untested.
+	origDry, origTO, origBin := Config.DryRun, Config.ExecTimeout, execBinary
+	Config.DryRun = false
+	Config.ExecTimeout = 50 * time.Millisecond
+	execBinary = "sleep"
+	defer func() { Config.DryRun, Config.ExecTimeout, execBinary = origDry, origTO, origBin }()
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "sleep", "5")
-	err := cmd.Run()
+	_, err := executeCommand(context.Background(), []string{"5"})
 	elapsed := time.Since(start)
 
 	if err == nil {
-		t.Fatalf("expected sleep to be killed by timeout, but it succeeded after %s", elapsed)
+		t.Fatalf("expected the deadline to kill sleep, but it succeeded after %s", elapsed)
 	}
-	// Should die fast — well under the 5s sleep request.
+	// The production message names the configured timeout and the env knob —
+	// asserting both pins that Config.ExecTimeout (not some constant) fed the
+	// deadline, and that the caller is told how to raise it.
+	if !strings.Contains(err.Error(), "timed out after 50ms") ||
+		!strings.Contains(err.Error(), "BALENAMCP_EXEC_TIMEOUT") {
+		t.Fatalf("timeout error should name the configured timeout and the env knob, got: %v", err)
+	}
 	if elapsed > 2*time.Second {
 		t.Fatalf("subprocess took %s to die; timeout did not propagate to the child", elapsed)
+	}
+}
+
+// TestExecuteCommand_CLIErrorBranch pins the plain CLI-failure path: a live
+// context and a binary that exits non-zero must yield the "balena CLI error"
+// message, distinct from the timeout and cancellation branches.
+func TestExecuteCommand_CLIErrorBranch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no portable false binary on Windows runner; CI covers Linux + macOS")
+	}
+	if _, err := exec.LookPath("false"); err != nil {
+		t.Skipf("false not on PATH: %v", err)
+	}
+	origDry, origBin := Config.DryRun, execBinary
+	Config.DryRun = false
+	execBinary = "false"
+	defer func() { Config.DryRun, execBinary = origDry, origBin }()
+
+	_, err := executeCommand(context.Background(), []string{"anything"})
+	if err == nil {
+		t.Fatalf("expected an error from a failing binary")
+	}
+	if !strings.HasPrefix(err.Error(), "balena CLI error:") {
+		t.Fatalf("expected the CLI-error message, got: %v", err)
+	}
+}
+
+// TestRunCmdAllowingBenignError_RealExec drives both error branches of
+// runCmdAllowingBenignError through a real failing subprocess. Before this
+// test every mutant in that function survived: inverting the Contains check,
+// swapping the two returns, or replacing the benign result with an error all
+// passed, because only the success path (and a separate reimplementation in
+// the resources composite) was ever exercised.
+func TestRunCmdAllowingBenignError_RealExec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no portable false binary on Windows runner; CI covers Linux + macOS")
+	}
+	if _, err := exec.LookPath("false"); err != nil {
+		t.Skipf("false not on PATH: %v", err)
+	}
+	origDry, origBin := Config.DryRun, execBinary
+	Config.DryRun = false
+	execBinary = "false" // exits 1 with no output → err is "balena CLI error: exit status 1"
+	defer func() { Config.DryRun, execBinary = origDry, origBin }()
+
+	// Marker matches the error → benign: success result whose text IS the marker.
+	res, err := runCmdAllowingBenignError(context.Background(), []string{"tag", "list"}, "exit status 1")
+	if err != nil {
+		t.Fatalf("unexpected transport error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("matching benign marker must convert the failure to success, got error result")
+	}
+	txt, ok := mcp.AsTextContent(res.Content[0])
+	if !ok || txt.Text != "exit status 1" {
+		t.Fatalf("benign result must be exactly the marker text, got %#v", res.Content[0])
+	}
+
+	// Marker doesn't match → the real failure propagates as an error result.
+	res, err = runCmdAllowingBenignError(context.Background(), []string{"tag", "list"}, "No tags found")
+	if err != nil {
+		t.Fatalf("unexpected transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("non-matching marker must propagate the failure, got success")
+	}
+	txt, ok = mcp.AsTextContent(res.Content[0])
+	if !ok || !strings.Contains(txt.Text, "balena CLI error") {
+		t.Fatalf("propagated failure should carry the CLI error text, got %#v", res.Content[0])
 	}
 }
 
@@ -503,10 +696,12 @@ func TestExecuteCommandRespectsCancelledContext(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error from a pre-cancelled context")
 	}
-	// We accept either the explicit "cancelled by caller" message (preferred)
-	// or any CLI/exec error — the point is we did not silently succeed.
-	if !strings.Contains(err.Error(), "cancel") && !strings.Contains(err.Error(), "balena CLI error") {
-		t.Logf("note: error was %q", err)
+	// Require the exact cancellation message. The old form accepted either
+	// this branch or the generic CLI error and only t.Logf'd on mismatch, so
+	// deleting the Canceled arm entirely (falling through to "balena CLI
+	// error: context canceled") passed unnoticed.
+	if err.Error() != "balena CLI cancelled by caller" {
+		t.Fatalf("expected the cancellation message, got: %v", err)
 	}
 }
 

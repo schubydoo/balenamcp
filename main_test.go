@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -52,12 +54,16 @@ func callTool(t *testing.T, c *mcpclient.Client, ctx context.Context, name strin
 	return text.Text
 }
 
-// expect asserts the dry-run output of a tool call contains the expected argv string.
+// expect asserts the dry-run output of a tool call is EXACTLY the expected
+// argv. Exactness matters: a Contains assertion cannot see argv *widening*, so
+// a regression that unconditionally appends --force to device-reboot — or any
+// other stray flag — would pass a substring check. The behavioral audit built
+// exactly those mutants and 31 of them survived the old Contains form.
 func expect(t *testing.T, c *mcpclient.Client, ctx context.Context, name string, args map[string]any, expectedArgv string) {
 	t.Helper()
 	got := callTool(t, c, ctx, name, args)
-	assert.Contains(t, got, expectedArgv,
-		"tool %q with args %v should produce CLI argv %q; got: %s", name, args, expectedArgv, got)
+	assert.Equal(t, "[DRY RUN] "+expectedArgv, got,
+		"tool %q with args %v should produce exactly this CLI argv", name, args)
 }
 
 // expectNot is the companion to expect: assert the dry-run output does NOT
@@ -212,6 +218,11 @@ func TestReadOnlyTools(t *testing.T) {
 		"balena device detect --timeout 120 --verbose")
 	// timeout absent must NOT emit --timeout (guards the -1 sentinel).
 	expectNot(t, c, ctx, "device-detect", nil, "--timeout")
+	// timeout=0 is a valid value and must be forwarded — pins the >= 0
+	// boundary that a gremlins CONDITIONALS_BOUNDARY mutant flips to > 0.
+	expect(t, c, ctx, "device-detect",
+		map[string]any{"timeout": float64(0)},
+		"balena device detect --timeout 0")
 
 	// device-local-mode-get — read-only status query.
 	expect(t, c, ctx, "device-local-mode-get",
@@ -253,24 +264,17 @@ func TestMutatingTools(t *testing.T) {
 		"balena device track-fleet 7cf02a6")
 
 	// device-ssh: one-shot command over the SSH gateway. The command travels
-	// via stdin (rendered as <<<"...\nexit\n" in dry-run), not argv.
+	// via stdin (rendered as <<<"...\nexit\n" in dry-run), not argv. Exact
+	// assertions pin the argv AND the piped payload with its auto-appended
+	// `exit` (which keeps the remote shell from hanging on stdin EOF), and
+	// prove the command string never leaks into argv.
 	expect(t, c, ctx, "device-ssh",
 		map[string]any{"uuid": "7cf02a6", "command": "cat /proc/meminfo"},
-		"balena device ssh 7cf02a6")
+		`balena device ssh 7cf02a6 <<<"cat /proc/meminfo\nexit\n"`)
 	// service-container target appends the service name as the second arg.
 	expect(t, c, ctx, "device-ssh",
 		map[string]any{"uuid": "7cf02a6", "command": "ls", "service": "main"},
-		"balena device ssh 7cf02a6 main")
-	// the piped payload carries the command plus the auto-appended `exit` that
-	// keeps the remote shell from hanging on stdin EOF.
-	expect(t, c, ctx, "device-ssh",
-		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
-		`<<<"uptime\nexit\n"`)
-	// without a service the second positional arg must NOT appear — guards a
-	// mutation that always-appends the service.
-	expectNot(t, c, ctx, "device-ssh",
-		map[string]any{"uuid": "7cf02a6", "command": "uptime"},
-		"balena device ssh 7cf02a6 uptime")
+		`balena device ssh 7cf02a6 main <<<"ls\nexit\n"`)
 
 	// release finalize
 	expect(t, c, ctx, "release-finalize",
@@ -741,6 +745,52 @@ func TestErrors(t *testing.T) {
 	expectError(t, c, ctx, "env-set",
 		map[string]any{"name": "DEBUG", "fleet": "f", "device": "d"}, "exactly one")
 
+	// Flag-shape guard, per-tool wiring. The helper itself is unit-tested, but
+	// the behavioral audit showed 18 of its callsites could be replaced with
+	// guard-free lookups and no test failed — i.e. each tool's own wiring was
+	// unpinned. One row per audited callsite; every input is an identifier an
+	// agent could plausibly pass ("--help", "-f", …) that must never reach the
+	// balena CLI as argv.
+	expectError(t, c, ctx, "fleet-info",
+		map[string]any{"fleet": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "device-list",
+		map[string]any{"fleet": "-f"}, "cannot start with '-'")
+	expectError(t, c, ctx, "device-logs",
+		map[string]any{"device": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "device-logs",
+		map[string]any{"device": "7cf02a6", "service": "-s"}, "cannot start with '-'")
+	expectError(t, c, ctx, "os-versions",
+		map[string]any{"type": "--all"}, "cannot start with '-'")
+	expectError(t, c, ctx, "release-list",
+		map[string]any{"fleet": "-f"}, "cannot start with '-'")
+	expectError(t, c, ctx, "release-info",
+		map[string]any{"id": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "release-asset-list",
+		map[string]any{"id": "--help"}, "cannot start with '-'")
+	expectError(t, c, ctx, "env-list",
+		map[string]any{"fleet": "f", "service": "-s"}, "cannot start with '-'")
+	expectError(t, c, ctx, "api-key-list",
+		map[string]any{"fleet": "-f"}, "cannot start with '-'")
+	expectError(t, c, ctx, "device-pin",
+		map[string]any{"uuid": "7cf02a6", "release": "-r"}, "cannot start with '-'")
+	expectError(t, c, ctx, "fleet-pin",
+		map[string]any{"fleet": "myorg/myfleet", "release": "-r"}, "cannot start with '-'")
+	expectError(t, c, ctx, "tag-set",
+		map[string]any{"key": "-k", "fleet": "my-fleet"}, "cannot start with '-'")
+	expectError(t, c, ctx, "tag-rm",
+		map[string]any{"key": "-k", "fleet": "my-fleet"}, "cannot start with '-'")
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "-n", "value": "1", "fleet": "my-fleet"}, "cannot start with '-'")
+	expectError(t, c, ctx, "env-set",
+		map[string]any{"name": "DEBUG", "value": "1", "fleet": "my-fleet", "service": "-s"},
+		"cannot start with '-'")
+	// assetTarget is the shared preamble for all three release-asset tools, so
+	// these two rows close the release and key guards across the family.
+	expectError(t, c, ctx, "release-asset-delete",
+		map[string]any{"release": "-r", "key": "k"}, "cannot start with '-'")
+	expectError(t, c, ctx, "release-asset-delete",
+		map[string]any{"release": "abc123", "key": "-k"}, "cannot start with '-'")
+
 	// Flag-shape guard: identifiers that start with '-' must be rejected, both
 	// on positional args and on flag-value args (via pickResource).
 	expectError(t, c, ctx, "device-info",
@@ -904,6 +954,33 @@ func TestReleaseAssetTools(t *testing.T) {
 		map[string]any{"name": "Main", "path": "adir"},
 		"is a directory")
 
+	// A regular file used as a directory component. On POSIX EvalSymlinks
+	// fails with ENOTDIR (non-NotExist), so the resolver's "cannot be
+	// resolved" branch fires; on Windows the same input is PATH_NOT_FOUND
+	// (IsNotExist), the walk-up succeeds, and the upload handler's os.Stat
+	// backstop rejects it as unreadable instead. Fail-closed either way —
+	// assert the layer each platform actually uses.
+	fileAsDirErr := "cannot be resolved"
+	if runtime.GOOS == "windows" {
+		fileAsDirErr = "not readable"
+	}
+	expectError(t, c, ctx, "release-asset-upload",
+		map[string]any{"release": "abc123", "key": "k", "file_path": "app.tar.gz/child"},
+		fileAsDirErr)
+	// A symlink loop inside the root is the other deterministic trigger.
+	if err := os.Symlink(filepath.Join(root, "loop-b"), filepath.Join(root, "loop-a")); err == nil {
+		require.NoError(t, os.Symlink(filepath.Join(root, "loop-a"), filepath.Join(root, "loop-b")))
+		expectError(t, c, ctx, "release-asset-download",
+			map[string]any{"release": "abc123", "key": "k", "output": "loop-a/x.bin"},
+			"cannot be resolved")
+	}
+	// "." resolves to the asset root itself. Pinned as ALLOWED: it stays
+	// inside the boundary, and the CLI fails cleanly on a directory target,
+	// so refusing it here would add a rule without adding safety.
+	expect(t, c, ctx, "release-asset-download",
+		map[string]any{"release": "abc123", "key": "k", "output": ".", "overwrite": true},
+		"balena release-asset download abc123 --key k --output "+canonical+" --overwrite")
+
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o600))
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err == nil {
@@ -931,4 +1008,232 @@ func TestReleaseAssetToolsDisabled(t *testing.T) {
 	expect(t, c, ctx, "release-asset-delete",
 		map[string]any{"release": "abc123", "key": "k"},
 		"balena release-asset delete abc123 --key k --yes")
+}
+
+// TestConfirmSchemaAdvertised pins the `confirm` discovery contract: every
+// destructive tool must advertise the confirm bool in its input schema (that
+// is how clients learn about BALENAMCP_REQUIRE_CONFIRM without reading
+// source), and no read-only tool may carry one. Renaming the field in the
+// destructive() helper previously survived both the Go suite and CI's
+// mcp-smoke, which only spot-checks two tools' hints.
+func TestConfirmSchemaAdvertised(t *testing.T) {
+	c, ctx := newTestClient(t)
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Tools)
+
+	for _, tool := range res.Tools {
+		de := tool.Annotations.DestructiveHint
+		require.NotNil(t, de, "tool %q missing destructive hint", tool.Name)
+		_, hasConfirm := tool.InputSchema.Properties["confirm"]
+		if *de && !hasConfirm {
+			t.Errorf("destructive tool %q does not advertise the confirm field", tool.Name)
+		}
+		if !*de && hasConfirm {
+			t.Errorf("read-only tool %q advertises a confirm field it never reads", tool.Name)
+		}
+	}
+}
+
+// TestPromptRegistrationWiring drives prompts/get through the real server for
+// every advertised prompt, asserting a substring unique to that prompt's
+// template. Handlers were previously tested only in isolation, so swapping
+// two handlers in the registration list (or dropping a required-argument
+// marker) passed the Go suite.
+func TestPromptRegistrationWiring(t *testing.T) {
+	c, ctx := newTestClient(t)
+
+	cases := []struct {
+		name   string
+		args   map[string]string
+		unique string // substring that exists in this prompt's template only
+	}{
+		{"diagnose-device", map[string]string{"uuid": "u1"}, "Do not take any destructive action"},
+		{"deep-diagnose-device", map[string]string{"uuid": "u1"}, "Do not run mutating shell commands"},
+		{"fleet-health-report", map[string]string{"fleet": "o/f"}, "Produce a health report"},
+		{"safe-release-rollout", map[string]string{"fleet": "o/f", "release": "r1"}, "canary"},
+		{"rollback-device", map[string]string{"uuid": "u1"}, "Do not apply the pin without explicit user approval"},
+		{"audit-config", map[string]string{"fleet": "o/f"}, "Never print secret values in full; mask them"},
+		{"compare-releases", map[string]string{"release_a": "a", "release_b": "b"}, "does NOT include per-service image sizes"},
+		{"replicate-config", map[string]string{"source": "o/a", "target": "o/b"}, "MASKING any secret-shaped values"},
+		{"bulk-tag", map[string]string{"fleet": "o/f", "key": "k"}, "tag-set"},
+		{"prepare-local-dev", map[string]string{"uuid": "u1"}, "local mode"},
+		{"rotate-api-keys", nil, "Never revoke a key the user has not explicitly named"},
+	}
+
+	listed, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
+	require.NoError(t, err)
+	require.Len(t, listed.Prompts, len(cases), "prompt inventory drifted; update this table")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mcp.GetPromptRequest{}
+			req.Params.Name = tc.name
+			req.Params.Arguments = tc.args
+			res, err := c.GetPrompt(ctx, req)
+			require.NoError(t, err)
+			require.NotEmpty(t, res.Messages)
+			txt, ok := mcp.AsTextContent(res.Messages[0].Content)
+			require.True(t, ok)
+			// The unique substring proves name→handler binding; several of
+			// them are the prompt's SAFETY clause, so deleting a guardrail
+			// sentence fails here too.
+			assert.Contains(t, txt.Text, tc.unique)
+		})
+	}
+}
+
+// TestResourceRegistrationWiring reads every static resource and template
+// instance through the real server in dry-run mode. Dry-run section output
+// embeds the argv each section would run, so asserting argv substrings pins
+// the URI→handler binding: the fleet/releases template swapped to the full
+// fleet handler previously survived the Go suite AND CI's smoke probes.
+func TestResourceRegistrationWiring(t *testing.T) {
+	c, ctx := newTestClient(t)
+
+	cases := []struct {
+		uri      string
+		contains []string
+		absent   []string
+	}{
+		{"balena://account", []string{"whoami", "organization list"}, nil},
+		{"balena://account/keys", []string{"ssh-key list", "api-key list"}, nil},
+		{"balena://fleets", []string{"fleet list --json"}, nil},
+		{"balena://device-types", []string{"device-type list --json"}, nil},
+		{"balena://gotchas", []string{"balena CLI gotchas"}, nil},
+		{"balena://device/dev1", []string{"device dev1 --json", "device logs dev1", "env list --device dev1"}, nil},
+		{"balena://fleet/o/f", []string{"fleet o/f --json", "device list --fleet o/f", "release list o/f"}, nil},
+		// The /releases template must serve ONLY the release history — the
+		// absent list is what distinguishes it from the full fleet snapshot.
+		{"balena://fleet/o/f/releases", []string{"release list o/f"}, []string{"device list --fleet"}},
+		{"balena://release/rel9", []string{"release rel9 --json", "release rel9 --composition", "release-asset list rel9"}, nil},
+		{"balena://os-versions/raspberrypi4", []string{"os versions raspberrypi4", "--esr", "--include-draft"}, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.uri, func(t *testing.T) {
+			req := mcp.ReadResourceRequest{}
+			req.Params.URI = tc.uri
+			res, err := c.ReadResource(ctx, req)
+			require.NoError(t, err)
+			require.NotEmpty(t, res.Contents)
+			txt, ok := res.Contents[0].(mcp.TextResourceContents)
+			require.True(t, ok, "contents not text: %T", res.Contents[0])
+			for _, want := range tc.contains {
+				assert.Contains(t, txt.Text, want)
+			}
+			for _, no := range tc.absent {
+				assert.NotContains(t, txt.Text, no)
+			}
+		})
+	}
+}
+
+// TestSetupFlagParsing covers the flag-parse → config → SetupServer path that
+// main() delegates to.
+func TestSetupFlagParsing(t *testing.T) {
+	origDry := server.Config.DryRun
+	t.Cleanup(func() { server.Config.DryRun = origDry })
+
+	var buf strings.Builder
+
+	srv, err := setup([]string{"-dry-run"}, &buf)
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	assert.True(t, server.Config.DryRun, "-dry-run must set Config.DryRun")
+
+	srv, err = setup(nil, &buf)
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	assert.False(t, server.Config.DryRun, "no flag must leave dry-run off")
+
+	// An unknown flag is a parse error, reported on the provided writer.
+	_, err = setup([]string{"-no-such-flag"}, &buf)
+	require.Error(t, err)
+	assert.Contains(t, buf.String(), "no-such-flag")
+}
+
+// TestRun covers main's body via the injected exit recorder: the flag-error
+// path must exit 2 without serving, and the good path must serve to stdin
+// EOF without exiting. TestMainEntry then drives main() itself by swapping
+// the process globals it binds, so every line of this file is exercised.
+func TestRun(t *testing.T) {
+	origIn := os.Stdin
+	t.Cleanup(func() { os.Stdin = origIn })
+
+	t.Run("flag error exits 2 without serving", func(t *testing.T) {
+		var code = -1
+		var stderr strings.Builder
+		run([]string{"-no-such-flag"}, &stderr, func(c int) { code = c })
+		assert.Equal(t, 2, code)
+		assert.NotContains(t, stderr.String(), "Starting BalenaMCP server",
+			"a parse failure must not fall through to serving")
+	})
+
+	t.Run("good args serve to stdin EOF without exiting", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		os.Stdin = r
+
+		exited := false
+		var stderr strings.Builder
+		run([]string{"-dry-run"}, &stderr, func(int) { exited = true })
+		assert.False(t, exited, "a clean serve must not call exit")
+		assert.Contains(t, stderr.String(), "Starting BalenaMCP server...")
+	})
+}
+
+// TestMainEntry drives main() itself — the one-line binding of run to the
+// real process globals — by swapping os.Args and os.Stdin for the duration.
+func TestMainEntry(t *testing.T) {
+	origArgs, origIn := os.Args, os.Stdin
+	t.Cleanup(func() { os.Args, os.Stdin = origArgs, origIn })
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, w.Close()) // immediate EOF: serve returns, main returns
+	os.Args = []string{"balenamcp", "-dry-run"}
+	os.Stdin = r
+
+	main() // banner goes to real stderr; success here is returning at all
+}
+
+// TestServe covers the stdio serve shim. ServeStdio reads os.Stdin directly,
+// so the test swaps it for a pipe: closing the write end immediately is a
+// clean client disconnect (EOF), and handing it an already-closed file forces
+// the read error that the "Server error" branch reports. Only main's
+// os.Exit(2) line remains uncoverable in-process.
+func TestServe(t *testing.T) {
+	origIn := os.Stdin
+	t.Cleanup(func() { os.Stdin = origIn })
+
+	srv, err := setup([]string{"-dry-run"}, io.Discard)
+	require.NoError(t, err)
+
+	t.Run("clean shutdown on stdin EOF", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close()) // immediate EOF = client hung up
+		os.Stdin = r
+
+		var stderr strings.Builder
+		serve(srv, &stderr)
+		assert.Contains(t, stderr.String(), "Starting BalenaMCP server...")
+		assert.NotContains(t, stderr.String(), "Server error",
+			"a client closing stdin is a normal shutdown, not an error")
+	})
+
+	t.Run("read failure is reported", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		require.NoError(t, r.Close()) // already closed → read error, not EOF
+		os.Stdin = r
+
+		var stderr strings.Builder
+		serve(srv, &stderr)
+		assert.Contains(t, stderr.String(), "Server error",
+			"a non-EOF stdin failure must be surfaced on stderr")
+	})
 }
