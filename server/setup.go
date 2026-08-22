@@ -706,6 +706,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingExec(srv)
 	registerMutatingPins(srv)
 	registerMutatingFleetLifecycle(srv)
+	registerMutatingFleetCreation(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1187,6 +1188,65 @@ func registerMutatingFleetLifecycle(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		return runCmd(ctx, []string{"fleet", "rm", fleet, "--yes"})
+	})
+}
+
+// registerMutatingFleetCreation: fleet-create, fleet-rename. Fleet lifecycle
+// that does not touch the fleet's devices — kept apart from
+// registerMutatingFleetLifecycle, whose tools all act on EVERY device.
+//
+// Both tools require every argument the CLI would otherwise prompt for.
+// `fleet create` renders an interactive dropdown when --organization or --type
+// is omitted and the account has more than one candidate; `fleet rename`
+// prompts when newName is omitted. Under MCP a prompt is not a question, it is
+// a hang until BALENAMCP_EXEC_TIMEOUT fires, so these arguments are mandatory
+// here even though the CLI treats them as optional.
+func registerMutatingFleetCreation(srv *server.MCPServer) {
+	// fleet-create ---------------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-create",
+		mcp.WithDescription("Create a new fleet. Requires the owning organization's handle (its slug, not its display name — list them with organization-list) and the fleet's default device type (list them with device-type-list). Both are required because the CLI would otherwise show an interactive dropdown and hang the call."),
+		destructive,
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description("Name for the new fleet.")),
+		mcp.WithString("organization", mcp.Required(),
+			mcp.Description("Handle/slug of the owning organization (e.g. 'myorg'), as listed by organization-list. Not the display name.")),
+		mcp.WithString("type", mcp.Required(),
+			mcp.Description("Default device type slug for the fleet (e.g. 'raspberrypi4-64'), as listed by device-type-list.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, errRes := guardDestructive(r, "name", "fleet name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		org, errRes := requireIdentifier(r, "organization", "organization handle")
+		if errRes != nil {
+			return errRes, nil
+		}
+		deviceType, errRes := requireIdentifier(r, "type", "device type")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "create", name,
+			"--organization", org, "--type", deviceType})
+	})
+
+	// fleet-rename ---------------------------------------------------------
+	srv.AddTool(mcp.NewTool("fleet-rename",
+		mcp.WithDescription("Rename a fleet. Requires the current fleet name/slug and the new name (the CLI would otherwise block on an interactive prompt). Reversible by renaming again. Fleets of the legacy application type cannot be renamed."),
+		destructive,
+		mcp.WithString("fleet", mcp.Required(),
+			mcp.Description("Current fleet name or org/fleet slug (e.g. 'MyFleet' or 'myorg/myfleet').")),
+		mcp.WithString("new_name", mcp.Required(),
+			mcp.Description("New name for the fleet.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fleet, errRes := guardDestructive(r, "fleet", "fleet slug")
+		if errRes != nil {
+			return errRes, nil
+		}
+		newName, errRes := requireIdentifier(r, "new_name", "new fleet name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		return runCmd(ctx, []string{"fleet", "rename", fleet, newName})
 	})
 }
 

@@ -128,6 +128,7 @@ jobs:
             tag-set tag-rm env-set env-rm env-rename
             device-local-mode-set release-invalidate release-validate
             fleet-track-latest fleet-purge fleet-restart fleet-rm
+            fleet-create fleet-rename
             organization-create organization-rename organization-rm api-key-revoke
           )
           missing=()
