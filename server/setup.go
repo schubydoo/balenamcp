@@ -889,6 +889,21 @@ func registerReadOnlyAccount(srv *server.MCPServer) {
 		return runCmd(ctx, []string{"ssh-key", "list"})
 	})
 
+	// ssh-key-info ---------------------------------------------------------
+	srv.AddTool(mcp.NewTool("ssh-key-info",
+		mcp.WithDescription("Show a single SSH key registered in balenaCloud, by its numeric ID. Get IDs from ssh-key-list."),
+		readOnly,
+		mcp.WithNumber("id", mcp.Required(),
+			mcp.Description("Numeric balenaCloud ID of the SSH key (from ssh-key-list).")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// The CLI parses this as an integer, so there is no flag-shape risk.
+		id, err := r.RequireInt("id")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return runCmd(ctx, []string{"ssh-key", fmt.Sprintf("%d", id)})
+	})
+
 	// api-key-list ---------------------------------------------------------
 	srv.AddTool(mcp.NewTool("api-key-list",
 		mcp.WithDescription("List balenaCloud API keys for the current user or a specific fleet."),
@@ -924,6 +939,7 @@ func registerMutatingTools(srv *server.MCPServer) {
 	registerMutatingDeviceIdentity(srv)
 	registerMutatingDeviceEstate(srv)
 	registerMutatingReleaseAssets(srv)
+	registerMutatingSSHKeys(srv)
 	registerMutatingOrgs(srv)
 	registerMutatingTags(srv)
 	registerMutatingEnvs(srv)
@@ -1948,6 +1964,66 @@ func registerMutatingOrgs(srv *server.MCPServer) {
 			return errRes, nil
 		}
 		return runCmd(ctx, []string{"organization", "rm", handle, "--yes"})
+	})
+}
+
+// registerMutatingSSHKeys: ssh-key-add, ssh-key-rm. The read side is
+// ssh-key-info, registered with the other read-only account tools.
+//
+// `api-key generate` is deliberately not wrapped. It prints a live, long-lived
+// balenaCloud credential to stdout and this server returns stdout verbatim to
+// the MCP client, where it may be persisted, summarized or forwarded. See the
+// deliberate-exclusions table in README.
+func registerMutatingSSHKeys(srv *server.MCPServer) {
+	// ssh-key-add ----------------------------------------------------------
+	//
+	// The key file is read from the host, so the path goes through the same
+	// BALENAMCP_ASSET_DIR confinement as the release-asset tools: without it,
+	// an arbitrary readable path would be an exfiltration channel, since the
+	// file contents are uploaded to balenaCloud.
+	srv.AddTool(mcp.NewTool("ssh-key-add",
+		mcp.WithDescription("Register an SSH PUBLIC key with the balenaCloud account. Requires BALENAMCP_ASSET_DIR to be set on the server; path is relative to it, so only key files placed in that directory can be added. Upload the .pub file only — balenaCloud never needs the private key, and a private key placed in the asset directory would be uploaded verbatim."),
+		destructive,
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description("Label for the key in balenaCloud.")),
+		mcp.WithString("path", mcp.Required(),
+			mcp.Description("Public key file (e.g. 'id_rsa.pub'), relative to BALENAMCP_ASSET_DIR. Absolute paths and '..' are rejected.")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, errRes := guardDestructive(r, "name", "SSH key name")
+		if errRes != nil {
+			return errRes, nil
+		}
+		path, errRes := resolveAssetPath(r.GetString("path", ""), "key path")
+		if errRes != nil {
+			return errRes, nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"%q is not readable: %v", r.GetString("path", ""), err)), nil
+		}
+		if info.IsDir() {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"%q is a directory, not a public key file", r.GetString("path", ""))), nil
+		}
+		return runCmd(ctx, []string{"ssh-key", "add", name, path})
+	})
+
+	// ssh-key-rm -----------------------------------------------------------
+	srv.AddTool(mcp.NewTool("ssh-key-rm",
+		mcp.WithDescription("Remove an SSH key from the balenaCloud account by its numeric ID. Irreversible, and removing the wrong key can lock a user out of their own devices — confirm the target with ssh-key-info first. --yes is always passed to bypass the interactive confirmation."),
+		destructive,
+		mcp.WithNumber("id", mcp.Required(),
+			mcp.Description("Numeric balenaCloud ID of the SSH key to remove (from ssh-key-list).")),
+	), func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if errRes := requireConfirm(r); errRes != nil {
+			return errRes, nil
+		}
+		id, err := r.RequireInt("id")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return runCmd(ctx, []string{"ssh-key", "rm", fmt.Sprintf("%d", id), "--yes"})
 	})
 }
 
