@@ -264,7 +264,7 @@ nothing balenamcp-specific about the wiring.
 > | `tag-set` | Create or update a tag | yes (`tag-rm`) |
 > | `tag-rm` | Remove a tag | yes (`tag-set`) |
 > | `env-set` | Set/update an env or config variable | yes (`env-rm` or `env-set` again) |
-> | `env-rm` | Delete an env or config variable (needs `yes: true` to bypass the CLI's confirm prompt) | yes (`env-set` again) |
+> | `env-rm` | Delete an env or config variable (passes `--yes`) | yes (`env-set` again) |
 > | `env-rename` | Change an existing variable's **value** by numeric ID (despite the name) | yes (set it back) |
 > | `organization-create` | Create a new organization | yes (`organization-rm`) |
 > | `organization-rename` | Rename an organization | yes (rename again) |
