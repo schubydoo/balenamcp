@@ -24,6 +24,11 @@
 //     destructive tool refuses to run unless the caller passes
 //     confirm:true in arguments. Belt-and-suspenders for MCP clients that
 //     ignore the destructiveHint annotation.
+//   - [Config].AssetDir (BALENAMCP_ASSET_DIR) — the single directory the
+//     filesystem-touching tools (release-asset-download/upload,
+//     ssh-key-add) may read or write, stored fully resolved. Unset — the
+//     default — disables those tools; an unresolvable value also fails
+//     closed with a stderr warning.
 //
 // [Version] is overridden at build time via -ldflags; goreleaser injects the
 // release tag, source builds report "dev".
@@ -53,13 +58,22 @@
 // balena CLI's "these flags are mutually exclusive" earlier with a
 // clearer message.
 //
+// Paths supplied to the filesystem-touching tools go through
+// [resolveAssetPath], the confinement boundary for BALENAMCP_ASSET_DIR:
+// absolute paths and Windows volume names are refused, the joined path
+// must stay inside the root after cleaning (rejecting ".." traversal),
+// and it must still be inside after symlink resolution. List-accepting
+// device commands are constrained to one device per call via
+// [rejectMultiTarget]; api-key-revoke is the sole documented exception.
+//
 // # Prompts
 //
 // Alongside tools, the server registers a set of MCP prompts
 // (registerPrompts) — user-invoked workflow templates for multi-step
-// operations: diagnose-device, fleet-health-report, safe-release-rollout,
-// rollback-device, audit-config, compare-releases, replicate-config, and
-// bulk-tag. A prompt makes no balena CLI calls
+// operations: diagnose-device, deep-diagnose-device, fleet-health-report,
+// safe-release-rollout, rollback-device, audit-config, compare-releases,
+// replicate-config, bulk-tag, prepare-local-dev, and rotate-api-keys. A
+// prompt makes no balena CLI calls
 // itself; it returns a single user-role message that instructs the model
 // which tools to call and in what order, encoding operational sequencing and
 // safety ordering (e.g. safe-release-rollout pins one canary and verifies it
@@ -70,9 +84,9 @@
 // # Resources
 //
 // The server also exposes read-only balena state as MCP resources
-// (registerResources) under the balena:// URI scheme — four static
+// (registerResources) under the balena:// URI scheme — five static
 // resources (balena://account, balena://account/keys, balena://fleets,
-// balena://device-types) and five URI templates (balena://device/{uuid},
+// balena://device-types, balena://gotchas) and five URI templates (balena://device/{uuid},
 // balena://fleet/{org}/{fleet}, balena://fleet/{org}/{fleet}/releases,
 // balena://release/{id}, balena://os-versions/{type}).
 // Whereas a tool is one CLI call invoked by the model, a resource is

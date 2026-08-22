@@ -6,9 +6,9 @@ name: Release Please
 # (`on: push: tags`).
 #
 # For Go projects (`release-type: go`) there is intentionally no source-level
-# version constant to bump — the binary version is injected at build time via
-# `-ldflags="-X main.version=..."` (planned for the goreleaser PR) and exposed
-# via runtime/debug.BuildInfo otherwise.
+# version constant to bump — goreleaser injects the tag at build time via
+# `-ldflags="-X github.com/schubydoo/balenamcp/server.Version=..."`
+# (see .goreleaser.yaml); untagged source builds report "dev".
 #
 # Mirrors schubydoo/dump1090-exporter's release-please.yml.
 

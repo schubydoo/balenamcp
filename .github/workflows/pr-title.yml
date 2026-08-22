@@ -3,7 +3,7 @@ name: PR Title
 # Validate that the pull-request title follows Conventional Commits. The repo
 # squash-merges with `squash_merge_commit_title: COMMIT_OR_PR_TITLE`, so the
 # PR title becomes the squash commit subject on multi-commit PRs — which
-# release-please (added in a follow-up PR) parses to decide version bumps and
+# release-please (release-please.yml) parses to decide version bumps and
 # CHANGELOG sections.
 #
 # Mirrors schubydoo/dump1090-exporter's pr-title.yml.

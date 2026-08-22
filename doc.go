@@ -24,30 +24,39 @@
 //
 // # Tool surface
 //
-// The server exposes 29 tools split into two categories. Read-only tools
-// (version, whoami, fleet-list, fleet-info, device-list, device-info,
-// device-logs, device-type-list, release-list, release-info,
-// release-asset-list, tag-list, env-list, os-versions, organization-list,
-// ssh-key-list, api-key-list) carry the MCP readOnlyHint and are safe to
-// invoke without confirmation.
-//
-// Mutating tools (device-reboot, device-restart, device-shutdown,
-// device-purge, device-pin, device-track-fleet, fleet-pin,
-// release-finalize, tag-set, tag-rm, env-set, env-rm) carry the
-// destructiveHint so compliant clients can prompt the user before
-// running them.
+// The server exposes 64 tools covering fleets, devices, releases, tags,
+// env vars, organizations, SSH keys, API keys and release assets, plus 11
+// guided workflow prompts and read-only balena:// resources. 22 tools carry
+// the MCP readOnlyHint and are safe to invoke without confirmation; 42
+// carry the destructiveHint so compliant clients can prompt the user
+// before running them. The per-tool inventory lives in the README and in
+// package server's documentation — this file deliberately does not repeat
+// the list, which goes stale with every addition.
 //
 // Every tool's identifier arguments are flag-shape guarded: arguments
 // beginning with "-" are rejected server-side to prevent argv injection
 // where an agent passes "--help" or similar as a UUID. Free-form values
-// (tag values, env values) are intentionally exempt.
+// (tag values, env values) are intentionally exempt. List-accepting device
+// commands are constrained to one device per call, and the tools that
+// touch the host filesystem are confined to the directory named by
+// BALENAMCP_ASSET_DIR (disabled entirely when unset).
 //
 // # Configuration
 //
-// All configuration lives in the invoking client's MCP server definition.
-// There are no environment variables specific to balenamcp itself — the
-// balena CLI's own authentication state (typically ~/.balena/token) is
-// inherited from the launching shell.
+// The balena CLI's own authentication state (typically ~/.balena/token)
+// is inherited from the launching shell. Three environment variables tune
+// the server itself:
+//
+//   - BALENAMCP_EXEC_TIMEOUT — wall-clock cap in seconds for any single
+//     balena CLI subprocess (default 60).
+//   - BALENAMCP_REQUIRE_CONFIRM — when truthy, every destructive tool
+//     refuses to run unless the call carries confirm:true in its
+//     arguments.
+//   - BALENAMCP_ASSET_DIR — the single directory the release-asset
+//     download/upload and ssh-key-add tools may read or write; unset (the
+//     default) disables those tools entirely.
+//
+// See the README's environment-variable table for the full semantics.
 //
 // # Verifying a release
 //
