@@ -46,9 +46,7 @@ Thumbs.db
 .env
 .env.local
 
-# Local-only agent notes and tooling (not part of the public repo)
-AGENTS.md
-CLAUDE.md
+# Local agent tooling + host notes (not part of the public repo)
 /.claude/
 /.worktreeinclude
 /CLAUDE.local.md
