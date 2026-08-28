@@ -49,4 +49,7 @@ Thumbs.db
 # Local-only agent notes and tooling (not part of the public repo)
 AGENTS.md
 CLAUDE.md
-.claude/
+/.claude/
+/.worktreeinclude
+/CLAUDE.local.md
+/scratch/
