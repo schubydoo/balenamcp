@@ -3,7 +3,7 @@ module github.com/schubydoo/balenamcp
 go 1.26.0
 
 require (
-	github.com/mark3labs/mcp-go v1.1.0
+	github.com/mark3labs/mcp-go v1.1.1
 	github.com/stretchr/testify v1.12.1
 )
 
