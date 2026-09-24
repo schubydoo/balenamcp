@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.3](https://github.com/schubydoo/balenamcp/compare/v1.3.2...v1.3.3) (2026-09-24)
+
+
+### Bug Fixes
+
+* **ci:** match mcp smoke replies by JSON-RPC id ([#110](https://github.com/schubydoo/balenamcp/issues/110)) ([e7926d7](https://github.com/schubydoo/balenamcp/commit/e7926d7cf71ff905258645f65e690b6ea891a16e))
+* **deps:** update module github.com/mark3labs/mcp-go to v1.1.1 ([#108](https://github.com/schubydoo/balenamcp/issues/108)) ([dda9564](https://github.com/schubydoo/balenamcp/commit/dda9564c0824931f3f9e0cd124cf31be814ca237))
+
 ## [1.3.2](https://github.com/schubydoo/balenamcp/compare/v1.3.1...v1.3.2) (2026-09-17)
 
 
