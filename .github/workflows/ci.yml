@@ -166,13 +166,15 @@ jobs:
           set -euo pipefail
           # Send initialize, the initialized notification, then tools/list.
           # The server emits one JSON object per request (none for notifications);
-          # we read the second response line which is the tools/list result.
+          # we select the reply with id 2, the tools/list result. Replies are
+          # matched by id, not line position: the server answers requests
+          # concurrently, so their order on stdout is not fixed.
           response=$(printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
 
           echo "tools/list response:"
           echo "$response" | jq '.result.tools | length as $n | "\($n) tools advertised"'
@@ -223,7 +225,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"device-list","arguments":{"fleet":"my-fleet","json":true}}}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           text=$(echo "$call" | jq -r '.result.content[0].text')
           echo "device-list dry-run -> $text"
           echo "$text" | grep -q -- '--fleet my-fleet --json' \
@@ -237,7 +239,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"prompts/list"}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           echo "prompts/list response:"
           echo "$prompts" | jq '.result.prompts | length as $n | "\($n) prompts advertised"'
           required_prompts=(
@@ -263,7 +265,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"diagnose-device","arguments":{"uuid":"abc123"}}}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           ptext=$(echo "$getp" | jq -r '.result.messages[0].content.text')
           echo "diagnose-device prompt (first 60 chars) -> ${ptext:0:60}"
           echo "$ptext" | grep -q 'abc123' \
@@ -277,7 +279,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           echo "resources/list response:"
           echo "$resources" | jq '.result.resources | length as $n | "\($n) static resources advertised"'
           required_resources=(
@@ -302,7 +304,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"balena://device/abc123"}}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           rtext=$(echo "$readres" | jq -r '.result.contents[0].text')
           echo "device resource (first 80 chars) -> ${rtext:0:80}"
           # The aggregated document must be valid JSON carrying the uuid and the
@@ -317,7 +319,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"balena://release/abc123"}}' \
             | "$BIN" -dry-run 2>/dev/null \
-            | sed -n '2p')
+            | jq -c 'select(.id == 2)')
           reltext=$(echo "$relres" | jq -r '.result.contents[0].text')
           echo "release resource (first 80 chars) -> ${reltext:0:80}"
           echo "$reltext" | jq -e '.release == "abc123" and has("info") and has("composition") and has("assets")' >/dev/null \
